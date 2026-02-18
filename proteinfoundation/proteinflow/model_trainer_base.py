@@ -15,7 +15,10 @@ import re
 
 from abc import abstractmethod
 from functools import partial
-from typing import List, Literal
+from typing import List, Literal, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from proteinfoundation.analysis.crystallization_hooks import CrystallizationTracker
 
 import lightning as L
 import numpy as np
@@ -563,6 +566,83 @@ class ModelTrainerBase(L.LightningModule):
             x_motif = x_motif,
             fixed_sequence_mask = fixed_sequence_mask,
             fixed_structure_mask = fixed_structure_mask,
+        )
+
+    def generate_with_analysis(
+        self,
+        nsamples: int,
+        n: int,
+        dt: float,
+        self_cond: bool,
+        cath_code: List[List[str]],
+        tracker: "CrystallizationTracker",
+        guidance_weight: float = 1.0,
+        autoguidance_ratio: float = 0.0,
+        dtype: torch.dtype = None,
+        schedule_mode: str = "uniform",
+        schedule_p: float = 1.0,
+        sampling_mode: str = "sc",
+        sc_scale_noise: float = "1.0",
+        sc_scale_score: float = "1.0",
+        gt_mode: Literal["us", "tan"] = "us",
+        gt_p: float = 1.0,
+        gt_clamp_val: float = None,
+        mask=None,
+        x_motif=None,
+        fixed_sequence_mask=None,
+        fixed_structure_mask=None,
+    ) -> Tensor:
+        """
+        Generates samples with crystallization point analysis.
+
+        This method is similar to generate() but captures attention data
+        for analyzing the crystallization point.
+
+        Args:
+            tracker: CrystallizationTracker instance to capture attention data
+            (other args same as generate())
+
+        Returns:
+            Generated samples, shape [nsamples, n, 3]
+        """
+        # Create a predict function that passes the tracker
+        def predict_clean_n_v_with_tracker(batch):
+            # Set the tracker on the nn forward pass
+            nn_out = self.nn(batch, tracker=tracker)
+            x_pred = self._nn_out_to_x_clean(nn_out, batch)
+
+            if guidance_weight != 1.0:
+                # For simplicity, skip CFG in analysis mode
+                logger.warning("CFG not fully supported in analysis mode, using conditional only")
+
+            v = self.fm.xt_dot(x_pred, batch["x_t"], batch["t"], batch["mask"])
+            return x_pred, v
+
+        if mask is None:
+            mask = torch.ones(nsamples, n).long().bool().to(self.device)
+
+        return self.fm.full_simulation_with_analysis(
+            predict_clean_n_v_with_tracker,
+            dt=dt,
+            nsamples=nsamples,
+            n=n,
+            self_cond=self_cond,
+            cath_code=cath_code,
+            device=self.device,
+            mask=mask,
+            tracker=tracker,
+            dtype=dtype,
+            schedule_mode=schedule_mode,
+            schedule_p=schedule_p,
+            sampling_mode=sampling_mode,
+            sc_scale_noise=sc_scale_noise,
+            sc_scale_score=sc_scale_score,
+            gt_mode=gt_mode,
+            gt_p=gt_p,
+            gt_clamp_val=gt_clamp_val,
+            x_motif=x_motif,
+            fixed_sequence_mask=fixed_sequence_mask,
+            fixed_structure_mask=fixed_structure_mask,
         )
 
 

@@ -9,10 +9,16 @@
 # its affiliates is strictly prohibited.
 
 
-from typing import Dict
+from typing import Dict, Optional, TYPE_CHECKING
 
 import einops
 import torch
+
+if TYPE_CHECKING:
+    from proteinfoundation.analysis.crystallization_hooks import (
+        AttentionCapture,
+        CrystallizationTracker,
+    )
 from torch.utils.checkpoint import checkpoint
 
 from openfold.model.msa import MSARowAttentionWithPairBias
@@ -188,20 +194,28 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
             dim=dim_token, dim_cond=dim_cond
         )
 
-    def forward(self, x, pair_rep, cond, mask):
+    def forward(
+        self,
+        x,
+        pair_rep,
+        cond,
+        mask,
+        capture: Optional["AttentionCapture"] = None,
+    ):
         """
         Args:
             x: Input sequence representation, shape [b, n, dim_token]
             cond: Conditioning variables, shape [b, n, dim_cond]
             pair_rep: Pair represnetation, shape [b, n, n, dim_pair]
             mask: Binary mask, shape [b, n]
+            capture: Optional AttentionCapture to store intermediates for analysis
 
         Returns:
             Updated sequence representation, shape [b, n, dim_token].
         """
         pair_mask = mask[:, :, None] * mask[:, None, :]  # [b, n, n]
         x = self.adaln(x, cond, mask)
-        x = self.mha(node_feats=x, pair_feats=pair_rep, mask=pair_mask)
+        x = self.mha(node_feats=x, pair_feats=pair_rep, mask=pair_mask, capture=capture)
         x = self.scale_output(x, cond, mask)
         return x * mask[..., None]
 
@@ -288,8 +302,15 @@ class MultiheadAttnAndTransition(torch.nn.Module):
             dim=dim_token, dim_cond=dim_cond, expansion_factor=expansion_factor
         )
 
-    def _apply_mha(self, x, pair_rep, cond, mask):
-        x_attn = self.mhba(x, pair_rep, cond, mask)
+    def _apply_mha(
+        self,
+        x,
+        pair_rep,
+        cond,
+        mask,
+        capture: Optional["AttentionCapture"] = None,
+    ):
+        x_attn = self.mhba(x, pair_rep, cond, mask, capture=capture)
         if self.residual_mha:
             x_attn = x_attn + x
         return x_attn * mask[..., None]
@@ -300,24 +321,32 @@ class MultiheadAttnAndTransition(torch.nn.Module):
             x_tr = x_tr + x
         return x_tr * mask[..., None]
 
-    def forward(self, x, pair_rep, cond, mask):
+    def forward(
+        self,
+        x,
+        pair_rep,
+        cond,
+        mask,
+        capture: Optional["AttentionCapture"] = None,
+    ):
         """
         Args:
             x: Input sequence representation, shape [b, n, dim_token]
             cond: conditioning variables, shape [b, n, dim_cond]
             mask: binary mask, shape [b, n]
             pair_rep: Pair representation (if provided, if no bias will be ignored), shape [b, n, n, dim_pair] or None
+            capture: Optional AttentionCapture to store intermediates for analysis
 
         Returns:
             Updated sequence representation, shape [b, n, dim].
         """
         x = x * mask[..., None]
         if self.parallel:
-            x = self._apply_mha(x, pair_rep, cond, mask) + self._apply_transition(
+            x = self._apply_mha(x, pair_rep, cond, mask, capture) + self._apply_transition(
                 x, cond, mask
             )
         else:
-            x = self._apply_mha(x, pair_rep, cond, mask)
+            x = self._apply_mha(x, pair_rep, cond, mask, capture)
             x = self._apply_transition(x, cond, mask)
         return x * mask[..., None]
 
@@ -640,7 +669,11 @@ class ProteinTransformerAF3(torch.nn.Module):
         r = self.num_registers
         return seqs[:, r:, :], pair[:, r:, r:, :], mask[:, r:]
 
-    def forward(self, batch_nn: Dict[str, torch.Tensor]):
+    def forward(
+        self,
+        batch_nn: Dict[str, torch.Tensor],
+        tracker: Optional["CrystallizationTracker"] = None,
+    ):
         """
         Runs the network.
 
@@ -652,6 +685,7 @@ class ProteinTransformerAF3(torch.nn.Module):
                 - "x_sc" (optional): tensor of shape [b, n, 3]
                 - "cath_code" (optional): list of cath codes [b, ?]
                 - And potentially others... All in the data batch.
+            tracker: Optional CrystallizationTracker for capturing attention data
 
         Returns:
             Predicted clean coordinates, shape [b, n, 3].
@@ -679,11 +713,24 @@ class ProteinTransformerAF3(torch.nn.Module):
         # Apply registers
         seqs, pair_rep, mask, c = self._extend_w_registers(seqs, pair_rep, mask, c)
 
+        # Check if we should capture attention for this forward pass
+        should_capture = tracker is not None and tracker.should_capture()
+
         # Run trunk
         for i in range(self.nlayers):
+            # Create capture object if tracking is enabled
+            capture = None
+            if should_capture:
+                from proteinfoundation.analysis.crystallization_hooks import AttentionCapture
+                capture = AttentionCapture()
+
             seqs = self.transformer_layers[i](
-                seqs, pair_rep, c, mask
+                seqs, pair_rep, c, mask, capture=capture
             )  # [b, n, token_dim]
+
+            # Store capture in tracker
+            if should_capture and capture is not None:
+                tracker.store(i, capture)
 
             if self.update_pair_repr:
                 if i < self.nlayers - 1:

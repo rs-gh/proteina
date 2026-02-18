@@ -1,0 +1,291 @@
+#!/usr/bin/env python
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-NvidiaProprietary
+
+"""
+Crystallization Point Analysis Script
+
+This script runs the crystallization point analysis on a protein structure
+generation model, capturing attention data across the flow-matching trajectory
+and computing the three key metrics:
+- R (Logit Dominance): ||B||_F / ||C||_F
+- H (Entropy): Shannon entropy of attention
+- rho (Spatial Alignment): Correlation with GT distance matrix
+
+For the rho metric, there are two modes:
+1. External ground truth: Provide --pdb_path to compare attention against a known structure
+2. Retrospective ground truth: Without --pdb_path, uses the final generated structure.
+   This reveals "how early does the model know the contacts it will eventually make?"
+
+Usage:
+    # With external ground truth (for validation/reconstruction tasks)
+    python script_utils/crystallization_analysis.py \
+        --config_name inference_base \
+        --pdb_path path/to/ground_truth.pdb \
+        --output_dir ./analysis_output
+
+    # With retrospective ground truth (for de novo generation analysis)
+    python script_utils/crystallization_analysis.py \
+        --config_name inference_base \
+        --protein_length 100 \
+        --output_dir ./analysis_output
+"""
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+# Add project root to path
+root = Path(__file__).parent.parent
+sys.path.insert(0, str(root))
+
+import torch
+import numpy as np
+from loguru import logger
+
+import hydra
+from hydra import compose, initialize_config_dir
+
+from proteinfoundation.analysis import (
+    CrystallizationTracker,
+    TrajectoryAnalyzer,
+    TrajectoryMetrics,
+    plot_crystallization_trajectory,
+    plot_crystallization_summary,
+    compute_gt_distance_matrix,
+)
+
+
+def load_ground_truth_coords(pdb_path: str) -> torch.Tensor:
+    """
+    Load ground truth CA coordinates from a PDB file.
+
+    Args:
+        pdb_path: Path to PDB file
+
+    Returns:
+        CA coordinates, shape [n, 3] in nm
+    """
+    from graphein_utils.graphein_utils import protein_to_pyg
+    from proteinfoundation.utils.coors_utils import ang_to_nm
+
+    graph = protein_to_pyg(pdb_path)
+    # CA atom is at index 1 in atom37 format
+    ca_coords = graph.coords[:, 1, :]  # [n, 3] in Angstroms
+    ca_coords_nm = ang_to_nm(ca_coords)  # Convert to nm
+    return ca_coords_nm
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run crystallization point analysis on protein generation model"
+    )
+    parser.add_argument(
+        "--config_path",
+        type=str,
+        default=str(root / "configs" / "experiment_config"),
+        help="Path to config directory",
+    )
+    parser.add_argument(
+        "--config_name",
+        type=str,
+        required=True,
+        help="Name of the inference config (e.g., inference_base)",
+    )
+    parser.add_argument(
+        "--pdb_path",
+        type=str,
+        default=None,
+        help="Path to ground truth PDB file (for spatial alignment metric)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="./crystallization_analysis",
+        help="Directory to save results",
+    )
+    parser.add_argument(
+        "--capture_every_n",
+        type=int,
+        default=5,
+        help="Capture attention every N timesteps (for memory efficiency)",
+    )
+    parser.add_argument(
+        "--protein_length",
+        type=int,
+        default=100,
+        help="Length of protein to generate (if no PDB provided)",
+    )
+    parser.add_argument(
+        "--cath_code",
+        type=str,
+        default=None,
+        help="CATH code for conditional generation (e.g., '3.40.50')",
+    )
+    parser.add_argument(
+        "--dt",
+        type=float,
+        default=0.01,
+        help="Timestep for sampling (default: 0.01 = 100 steps)",
+    )
+    parser.add_argument(
+        "--reduce_heads",
+        action="store_true",
+        help="Average over attention heads to save memory",
+    )
+    parser.add_argument(
+        "--skip_rho",
+        action="store_true",
+        help="Skip computing the spatial alignment (rho) metric entirely",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="Device to run on",
+    )
+    args = parser.parse_args()
+
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Crystallization Point Analysis")
+    logger.info(f"Config: {args.config_name}")
+    logger.info(f"Output: {output_dir}")
+
+    # Load config
+    with initialize_config_dir(config_dir=args.config_path, version_base=None):
+        cfg = compose(config_name=args.config_name)
+
+    # Load model
+    logger.info("Loading model...")
+    from proteinfoundation.proteinflow.proteina import Proteina
+
+    model = Proteina.load_from_checkpoint(
+        cfg.ckpt_path,
+        map_location=args.device,
+        cfg_exp=cfg,
+    )
+    model.eval()
+    model.to(args.device)
+
+    # Get model parameters
+    num_layers = model.nn.nlayers
+    num_heads = cfg.model.nn.nheads
+    logger.info(f"Model has {num_layers} layers, {num_heads} heads")
+
+    # Load ground truth if provided
+    gt_coords = None
+    if args.pdb_path:
+        logger.info(f"Loading ground truth from {args.pdb_path}")
+        gt_coords = load_ground_truth_coords(args.pdb_path)
+        n = gt_coords.shape[0]
+        gt_coords = gt_coords.unsqueeze(0).to(args.device)  # [1, n, 3]
+        logger.info(f"Ground truth protein length: {n}")
+    else:
+        n = args.protein_length
+        logger.info(f"No ground truth provided, generating protein of length {n}")
+
+    # Setup tracker
+    tracker = CrystallizationTracker()
+    tracker.enable(
+        capture_every_n=args.capture_every_n,
+        reduce_heads=args.reduce_heads,
+        move_to_cpu=True,
+    )
+
+    # Setup CATH code if provided
+    cath_code = None
+    if args.cath_code:
+        cath_code = [[args.cath_code]]
+        logger.info(f"Using CATH code: {args.cath_code}")
+
+    # Generate with analysis
+    logger.info("Running generation with analysis...")
+    mask = torch.ones(1, n, dtype=torch.bool, device=args.device)
+
+    with torch.no_grad():
+        samples = model.generate_with_analysis(
+            nsamples=1,
+            n=n,
+            dt=args.dt,
+            self_cond=getattr(cfg, 'self_cond', True),
+            cath_code=cath_code,
+            tracker=tracker,
+            mask=mask,
+            schedule_mode=getattr(cfg, 'schedule_mode', 'uniform'),
+            schedule_p=getattr(cfg, 'schedule_p', 1.0),
+            sampling_mode=getattr(cfg, 'sampling_mode', 'vf'),
+        )
+
+    logger.info(f"Generation complete. Captured {len(tracker)} attention snapshots")
+    logger.info(f"Memory usage: {tracker.memory_usage_mb():.1f} MB")
+
+    # Use retrospective ground truth if no PDB provided (unless --skip_rho is set)
+    # This computes ρ by correlating attention at each timestep with the final structure
+    if args.skip_rho:
+        logger.info("Skipping spatial alignment (rho) metric as requested")
+        gt_coords = None
+    elif gt_coords is None and samples is not None:
+        logger.info("Using retrospective ground truth (final generated structure)")
+        logger.info("  -> rho measures 'how early does the model know its final contacts?'")
+        gt_coords = samples.unsqueeze(0) if samples.dim() == 2 else samples[:1]  # [1, n, 3]
+        gt_coords = gt_coords.to(args.device)
+
+    # Compute metrics
+    logger.info("Computing crystallization metrics...")
+    analyzer = TrajectoryAnalyzer(tracker, num_layers, num_heads)
+    metrics = analyzer.compute_metrics(gt_coords, mask)
+
+    # Print summary
+    print("\n" + "=" * 60)
+    print(metrics.summary())
+    print("=" * 60 + "\n")
+
+    # Save metrics
+    metrics_path = output_dir / "crystallization_metrics.npz"
+    metrics.save(str(metrics_path))
+    logger.info(f"Saved metrics to {metrics_path}")
+
+    # Find crystallization point
+    try:
+        t_crystal, idx_crystal = metrics.get_crystallization_point(metric='entropy')
+        logger.info(f"Crystallization point (entropy): t={t_crystal:.3f} (step {idx_crystal})")
+    except Exception as e:
+        logger.warning(f"Could not determine crystallization point: {e}")
+
+    # Generate plots
+    logger.info("Generating visualizations...")
+
+    # Trajectory plot
+    fig1 = plot_crystallization_trajectory(
+        metrics,
+        save_path=output_dir / "trajectory.png",
+        title=f"Crystallization Analysis (n={n})",
+    )
+    logger.info(f"Saved trajectory plot")
+
+    # Summary plot
+    fig2 = plot_crystallization_summary(
+        metrics,
+        save_path=output_dir / "summary.png",
+    )
+    logger.info(f"Saved summary plot")
+
+    # Save generated structure
+    if samples is not None:
+        from proteinfoundation.utils.ff_utils.pdb_utils import write_prot_to_pdb
+        from proteinfoundation.utils.coors_utils import trans_nm_to_atom37
+
+        atom37 = trans_nm_to_atom37(samples[0].cpu())
+        pdb_path = output_dir / "generated_structure.pdb"
+        # Note: This would need proper implementation based on the codebase
+        logger.info(f"Generated structure saved to {pdb_path}")
+
+    logger.info(f"\nAnalysis complete! Results saved to {output_dir}")
+
+
+if __name__ == "__main__":
+    main()

@@ -9,11 +9,14 @@
 # its affiliates is strictly prohibited.
 
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import torch
 from einops import rearrange
 from torch import Tensor, einsum, nn
+
+if TYPE_CHECKING:
+    from proteinfoundation.analysis.crystallization_hooks import AttentionCapture
 
 
 def exists(val) -> bool:
@@ -68,12 +71,14 @@ class PairBiasAttention(nn.Module):
         node_feats: Tensor,
         pair_feats: Optional[Tensor],
         mask: Optional[Tensor],
+        capture: Optional["AttentionCapture"] = None,
     ) -> Tensor:
         """Multi-head scalar Attention Layer
 
         :param node_feats: scalar features of shape (b,n,d_s)
         :param pair_feats: pair features of shape (b,n,n,d_e)
         :param mask: boolean tensor of node adjacencies
+        :param capture: optional AttentionCapture to store intermediates for analysis
         :return:
         """
         assert exists(self.to_bias) or not exists(pair_feats)
@@ -91,17 +96,51 @@ class PairBiasAttention(nn.Module):
         q, k, v, g = map(
             lambda t: rearrange(t, "b ... (h d) -> b h ... d", h=h), (q, k, v, g)
         )
-        attn_feats = self._attn(q, k, v, b, mask)
+        attn_feats = self._attn(q, k, v, b, mask, capture)
         attn_feats = rearrange(
             torch.sigmoid(g) * attn_feats, "b h n d -> b n (h d)", h=h
         )
         return self.to_out_node(attn_feats)
 
-    def _attn(self, q, k, v, b, mask: Optional[Tensor]) -> Tensor:
-        """Perform attention update"""
-        sim = einsum("b h i d, b h j d -> b h i j", q, k) * self.scale
+    def _attn(
+        self,
+        q,
+        k,
+        v,
+        b,
+        mask: Optional[Tensor],
+        capture: Optional["AttentionCapture"] = None,
+    ) -> Tensor:
+        """Perform attention update
+
+        Args:
+            q: Query tensor, shape [b, h, n, d]
+            k: Key tensor, shape [b, h, n, d]
+            v: Value tensor, shape [b, h, n, d]
+            b: Pair bias, shape [b, h, n, n] or scalar 0
+            mask: Optional pair mask, shape [b, n, n]
+            capture: Optional AttentionCapture to store intermediates for analysis
+
+        Returns:
+            Attention output, shape [b, h, n, d]
+        """
+        # Compute QK^T (before scaling) for capture
+        qk_raw = einsum("b h i d, b h j d -> b h i j", q, k)
+
+        # Apply scaling
+        sim = qk_raw * self.scale
+
         if exists(mask):
             mask = rearrange(mask, "b i j -> b () i j")
             sim = sim.masked_fill(~mask, max_neg_value(sim))
+
+        # Compute attention weights
         attn = torch.softmax(sim + b, dim=-1)
+
+        # Capture intermediates if requested
+        if capture is not None:
+            capture.qk_raw = qk_raw
+            capture.bias = b if isinstance(b, Tensor) else None
+            capture.attn_weights = attn
+
         return einsum("b h i j, b h j d -> b h i d", attn, v)

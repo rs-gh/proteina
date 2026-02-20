@@ -27,4 +27,4 @@ inference/*
 data/
 *.egg-info/
 checkpoints/
-analysis_output/
+analysis_output/artifacts/

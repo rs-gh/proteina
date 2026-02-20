@@ -196,6 +196,7 @@ class TrajectoryAnalyzer:
         tracker: CrystallizationTracker,
         num_layers: int,
         num_heads: int,
+        num_registers: int = 0,
     ):
         """
         Initialize the analyzer.
@@ -204,10 +205,13 @@ class TrajectoryAnalyzer:
             tracker: CrystallizationTracker with captured attention data
             num_layers: Number of transformer layers in the model
             num_heads: Number of attention heads per layer
+            num_registers: Number of register tokens prepended to the sequence.
+                          These are stripped from captured attention before analysis.
         """
         self.tracker = tracker
         self.num_layers = num_layers
         self.num_heads = num_heads
+        self.num_registers = num_registers
 
     def compute_metrics(
         self,
@@ -238,9 +242,15 @@ class TrajectoryAnalyzer:
         if first_capture is None or first_capture.attn_weights is None:
             raise ValueError("No attention data in first capture")
 
-        protein_length = first_capture.attn_weights.shape[-1]
+        protein_length = first_capture.attn_weights.shape[-1] - self.num_registers
 
         # Compute GT distance matrix if coordinates provided
+        # Move mask and coords to CPU since captures are stored on CPU
+        if gt_coords is not None:
+            gt_coords = gt_coords.cpu()
+        if mask is not None:
+            mask = mask.cpu()
+
         gt_dist = None
         if gt_coords is not None:
             gt_dist = compute_gt_distance_matrix(gt_coords, mask)
@@ -275,6 +285,17 @@ class TrajectoryAnalyzer:
 
                 if qk_raw is None or bias is None or attn is None:
                     continue
+
+                # Strip register tokens if present.
+                # Registers are prepended to the sequence, so captured attention
+                # has shape [b, h, n+r, n+r] where r = num_registers.
+                r = self.num_registers
+                if r > 0:
+                    qk_raw = qk_raw[:, :, r:, r:]
+                    bias = bias[:, :, r:, r:]
+                    attn = attn[:, :, r:, r:]
+                    # Re-normalize attention after stripping registers
+                    attn = attn / (attn.sum(dim=-1, keepdim=True) + 1e-10)
 
                 # Select batch element and ensure on same device
                 qk_raw_b = qk_raw[batch_idx:batch_idx+1]

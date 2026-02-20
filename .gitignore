@@ -27,3 +27,4 @@ inference/*
 data/
 *.egg-info/
 checkpoints/
+analysis_output/

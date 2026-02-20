@@ -78,6 +78,9 @@ def load_ground_truth_coords(pdb_path: str) -> torch.Tensor:
 
 
 def main():
+    from dotenv import load_dotenv
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         description="Run crystallization point analysis on protein generation model"
     )
@@ -140,6 +143,12 @@ def main():
         help="Skip computing the spatial alignment (rho) metric entirely",
     )
     parser.add_argument(
+        "--ckpt_path",
+        type=str,
+        default=None,
+        help="Override checkpoint directory (e.g., checkpoints/proteina_v1.3_dfs_60m_notri_v1.0)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -159,21 +168,24 @@ def main():
     with initialize_config_dir(config_dir=args.config_path, version_base=None):
         cfg = compose(config_name=args.config_name)
 
+    # Override checkpoint path if provided via CLI
+    if args.ckpt_path is not None:
+        from omegaconf import OmegaConf
+        OmegaConf.update(cfg, "ckpt_path", args.ckpt_path)
+
     # Load model
     logger.info("Loading model...")
     from proteinfoundation.proteinflow.proteina import Proteina
 
-    model = Proteina.load_from_checkpoint(
-        cfg.ckpt_path,
-        map_location=args.device,
-        cfg_exp=cfg,
-    )
+    ckpt_file = os.path.join(cfg.ckpt_path, cfg.ckpt_name)
+    assert os.path.exists(ckpt_file), f"Checkpoint not found: {ckpt_file}"
+    model = Proteina.load_from_checkpoint(ckpt_file)
     model.eval()
     model.to(args.device)
 
-    # Get model parameters
+    # Get model parameters from the loaded model
     num_layers = model.nn.nlayers
-    num_heads = cfg.model.nn.nheads
+    num_heads = model.nn.transformer_layers[0].mhba.mha.heads
     logger.info(f"Model has {num_layers} layers, {num_heads} heads")
 
     # Load ground truth if provided
@@ -206,18 +218,26 @@ def main():
     logger.info("Running generation with analysis...")
     mask = torch.ones(1, n, dtype=torch.bool, device=args.device)
 
+    # Extract sampling parameters from config (matching inference.py structure)
+    sampling_args = cfg.sampling_caflow
+
     with torch.no_grad():
         samples = model.generate_with_analysis(
             nsamples=1,
             n=n,
             dt=args.dt,
-            self_cond=getattr(cfg, 'self_cond', True),
+            self_cond=cfg.get("self_cond", True),
             cath_code=cath_code,
             tracker=tracker,
             mask=mask,
-            schedule_mode=getattr(cfg, 'schedule_mode', 'uniform'),
-            schedule_p=getattr(cfg, 'schedule_p', 1.0),
-            sampling_mode=getattr(cfg, 'sampling_mode', 'vf'),
+            schedule_mode=cfg.schedule.schedule_mode,
+            schedule_p=cfg.schedule.schedule_p,
+            sampling_mode=sampling_args["sampling_mode"],
+            sc_scale_noise=sampling_args["sc_scale_noise"],
+            sc_scale_score=sampling_args["sc_scale_score"],
+            gt_mode=sampling_args["gt_mode"],
+            gt_p=sampling_args["gt_p"],
+            gt_clamp_val=sampling_args["gt_clamp_val"],
         )
 
     logger.info(f"Generation complete. Captured {len(tracker)} attention snapshots")
@@ -236,7 +256,9 @@ def main():
 
     # Compute metrics
     logger.info("Computing crystallization metrics...")
-    analyzer = TrajectoryAnalyzer(tracker, num_layers, num_heads)
+    num_registers = model.nn.num_registers
+    logger.info(f"Stripping {num_registers} register tokens from attention maps")
+    analyzer = TrajectoryAnalyzer(tracker, num_layers, num_heads, num_registers=num_registers)
     metrics = analyzer.compute_metrics(gt_coords, mask)
 
     # Print summary
@@ -274,14 +296,14 @@ def main():
     )
     logger.info(f"Saved summary plot")
 
-    # Save generated structure
+    # Save generated structure as PDB
     if samples is not None:
         from proteinfoundation.utils.ff_utils.pdb_utils import write_prot_to_pdb
         from proteinfoundation.utils.coors_utils import trans_nm_to_atom37
 
-        atom37 = trans_nm_to_atom37(samples[0].cpu())
+        atom37 = trans_nm_to_atom37(samples[:1].cpu())  # [1, n, 37, 3]
         pdb_path = output_dir / "generated_structure.pdb"
-        # Note: This would need proper implementation based on the codebase
+        write_prot_to_pdb(atom37[0].numpy(), str(pdb_path), overwrite=True, no_indexing=True)
         logger.info(f"Generated structure saved to {pdb_path}")
 
     logger.info(f"\nAnalysis complete! Results saved to {output_dir}")

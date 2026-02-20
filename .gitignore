@@ -24,3 +24,8 @@ wandb/
 tmp/*
 *.fasta
 inference/*
+.claude/
+data/
+*.egg-info/
+checkpoints/
+analysis_output/artifacts/

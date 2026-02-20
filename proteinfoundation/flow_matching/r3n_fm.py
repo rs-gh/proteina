@@ -10,7 +10,7 @@
 
 
 import math
-from typing import Callable, List, Literal, Optional, Tuple
+from typing import Callable, List, Literal, Optional, Tuple, TYPE_CHECKING
 
 import torch
 from jaxtyping import Bool, Float
@@ -18,6 +18,9 @@ from torch import Dict, Tensor
 from tqdm import tqdm
 
 from proteinfoundation.utils.align_utils.align_utils import mean_w_mask
+
+if TYPE_CHECKING:
+    from proteinfoundation.analysis.crystallization_hooks import CrystallizationTracker
 
 
 class R3NFlowMatcher:
@@ -537,6 +540,131 @@ class R3NFlowMatcher:
                     sc_scale_score=sc_scale_score,
                     mask=mask,
                 )
+            return x
+
+    def full_simulation_with_analysis(
+        self,
+        predict_clean_n_v: Callable,
+        dt: float,
+        nsamples: int,
+        n: int,
+        self_cond: bool,
+        cath_code: List[List[str]],
+        device: torch.device,
+        mask: Bool[Tensor, "* n"],
+        tracker: "CrystallizationTracker",
+        schedule_mode: Literal[
+            "uniform", "power", "cos_sch_v_snr", "loglinear", "edm", "log"
+        ] = "uniform",
+        schedule_p: float = 1.0,
+        sampling_mode: str = "vf",
+        sc_scale_noise: float = 1.0,
+        sc_scale_score: float = 1.0,
+        gt_mode: Literal["us", "tan"] = "us",
+        gt_p: float = 1.0,
+        gt_clamp_val: float = None,
+        x_motif=None,
+        fixed_sequence_mask=None,
+        fixed_structure_mask=None,
+        dtype: Optional[torch.dtype] = None,
+    ) -> Tensor:
+        """
+        Generates samples with crystallization point analysis.
+
+        This is similar to full_simulation() but sets the timestep on the tracker
+        at each step so attention data can be captured.
+
+        Args:
+            tracker: CrystallizationTracker instance to capture attention data
+            (other args same as full_simulation())
+
+        Returns:
+            Generated samples, shape [nsamples, n, 3]
+        """
+        assert mask.shape == (nsamples, n)
+
+        # Get discretization
+        nsteps = math.ceil(1.0 / dt)
+        print(
+            f"Sampling with analysis: nsteps={nsteps}, schedule={schedule_mode}, "
+            f"capture_every_n={tracker.capture_every_n}"
+        )
+
+        ts = self.get_schedule(
+            mode=schedule_mode,
+            nsteps=nsteps,
+            p1=schedule_p,
+        )
+
+        # Get gt
+        t_eval = ts[:-1]
+        gt = self.get_gt(
+            t=t_eval,
+            mode=gt_mode,
+            param=gt_p,
+            clamp_val=gt_clamp_val,
+        )
+
+        with torch.no_grad():
+            x = self.sample_reference(
+                n, shape=(nsamples,), device=device, mask=mask, dtype=dtype
+            )
+
+            if fixed_sequence_mask is not None:
+                x_motif = (x_motif - mean_w_mask(x_motif, fixed_sequence_mask, keepdim=True)) * fixed_sequence_mask[..., None]
+
+            for step in tqdm(range(nsteps), desc="Sampling with analysis"):
+                t_val = ts[step].item()
+                t = ts[step] * torch.ones(nsamples, device=device)
+                dt_step = ts[step + 1] - ts[step]
+                gt_step = gt[step]
+
+                # Set timestep on tracker BEFORE forward pass
+                tracker.set_timestep(step, t_val)
+
+                if fixed_structure_mask is None:
+                    nn_in = {
+                        "x_t": x,
+                        "t": t,
+                        "mask": mask,
+                    }
+                else:
+                    nn_in = {
+                        "x_t": x,
+                        "t": t,
+                        "mask": mask,
+                        "motif_mask": fixed_sequence_mask,
+                        "fixed_structure_mask": fixed_structure_mask,
+                        "x_motif": x_motif
+                    }
+
+                if cath_code is not None:
+                    nn_in["cath_code"] = cath_code
+                if step > 0 and self_cond:
+                    nn_in["x_sc"] = x_1_pred
+
+                x_1_pred, v = predict_clean_n_v(nn_in)
+
+                # Accommodate last few steps
+                current_sampling_mode = sampling_mode
+                if ts[step] > 0.99:
+                    current_sampling_mode = "vf"
+                if schedule_mode in ["cos_sch_v_snr", "edm"]:
+                    if ts[step] > 0.985:
+                        current_sampling_mode = "vf"
+
+                x, _ = self.simulation_step(
+                    x_t=x,
+                    v=v,
+                    t=t,
+                    dt=dt_step,
+                    gt=gt_step,
+                    sampling_mode=current_sampling_mode,
+                    sc_scale_noise=sc_scale_noise,
+                    sc_scale_score=sc_scale_score,
+                    mask=mask,
+                )
+
             return x
 
     def get_gt(

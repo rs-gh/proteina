@@ -1,0 +1,21 @@
+defaults:
+  - inference_base
+  - _self_
+
+run_name_: ucond_60M_notri
+ckpt_name: proteina_v1.3_DFS_60M_notri.ckpt
+
+self_cond: True
+
+# Generate just a few samples for testing
+nres_lens: [100]
+nsamples_per_len: 2
+max_nsamples: 2
+
+# Skip heavy designability computation
+compute_designability: False
+compute_fid: False
+
+sampling_caflow:
+  sampling_mode: sc  # "vf" for ODE sampling, "sc" for SDE sampling
+  sc_scale_noise: 0.45  # noise scale, used if sampling_mode == "sc"

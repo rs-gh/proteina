@@ -325,9 +325,8 @@ if __name__ == "__main__":
     trainer = L.Trainer(accelerator="gpu", devices=1)
     predictions = trainer.predict(model, dataloader)
 
-    # Code for designability and
-    # Store samples generated as pdbs and also scRMSD
-    if cfg.compute_designability:
+    # Save PDB files and optionally compute designability
+    if cfg.compute_designability or (not cfg.compute_designability and not cfg.compute_fid):
 
         # Add some columns to store per-sample results
         columns += ["id_gen", "pdb_path", "L"]
@@ -419,6 +418,6 @@ if __name__ == "__main__":
         df.to_csv(
             os.path.join(root_path, "..", f"results_{config_name}_fid.csv"), index=False
         )
-    else:
+    elif 'df' in dir():
         csv_file = os.path.join(root_path, "..", f"results_{config_name}.csv")
         df.to_csv(csv_file, index=False)

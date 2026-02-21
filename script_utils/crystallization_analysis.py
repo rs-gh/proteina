@@ -46,6 +46,7 @@ from loguru import logger
 
 import hydra
 from hydra import compose, initialize_config_dir
+import lightning as L
 
 from proteinfoundation.analysis import (
     CrystallizationTracker,
@@ -149,6 +150,12 @@ def main():
         help="Override checkpoint directory (e.g., checkpoints/proteina_v1.3_dfs_60m_notri_v1.0)",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (default: use config value, fallback 42)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -167,6 +174,13 @@ def main():
     # Load config
     with initialize_config_dir(config_dir=args.config_path, version_base=None):
         cfg = compose(config_name=args.config_name)
+
+    # Set random seed for reproducibility
+    seed = getattr(cfg, "seed", 42)
+    if args.seed is not None:
+        seed = args.seed
+    L.seed_everything(seed, workers=True)
+    logger.info(f"[seed] {seed}")
 
     # Override checkpoint path if provided via CLI
     if args.ckpt_path is not None:
@@ -259,7 +273,8 @@ def main():
     num_registers = model.nn.num_registers
     logger.info(f"Stripping {num_registers} register tokens from attention maps")
     analyzer = TrajectoryAnalyzer(tracker, num_layers, num_heads, num_registers=num_registers)
-    metrics = analyzer.compute_metrics(gt_coords, mask)
+    spatial_alignment_label = "vs. external GT" if args.pdb_path else "vs. final predicted structure"
+    metrics = analyzer.compute_metrics(gt_coords, mask, spatial_alignment_label=spatial_alignment_label)
 
     # Print summary
     print("\n" + "=" * 60)

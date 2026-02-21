@@ -45,6 +45,8 @@ class TrajectoryMetrics:
         logit_dominance: R = ||B||_F / ||C||_F, shape [T, L, H]
         entropy: Shannon entropy of attention, shape [T, L, H]
         spatial_alignment: Pearson correlation with GT distances, shape [T, L, H] or None
+        spatial_alignment_label: Human-readable description of what rho is measured against,
+                                 e.g. "vs. external GT" or "vs. final predicted structure"
         num_layers: Number of transformer layers
         num_heads: Number of attention heads
         protein_length: Length of the protein
@@ -54,6 +56,7 @@ class TrajectoryMetrics:
     logit_dominance: np.ndarray
     entropy: np.ndarray
     spatial_alignment: Optional[np.ndarray]
+    spatial_alignment_label: str
     num_layers: int
     num_heads: int
     protein_length: int
@@ -71,6 +74,7 @@ class TrajectoryMetrics:
         }
         if self.spatial_alignment is not None:
             d['spatial_alignment'] = self.spatial_alignment
+        d['spatial_alignment_label'] = self.spatial_alignment_label
         return d
 
     def save(self, path: str):
@@ -87,6 +91,7 @@ class TrajectoryMetrics:
             logit_dominance=data['logit_dominance'],
             entropy=data['entropy'],
             spatial_alignment=data.get('spatial_alignment'),
+            spatial_alignment_label=str(data.get('spatial_alignment_label', 'vs. ground truth')),
             num_layers=int(data['num_layers']),
             num_heads=int(data['num_heads']),
             protein_length=int(data['protein_length']),
@@ -160,15 +165,15 @@ class TrajectoryMetrics:
             f"  Early (t~0): {self.logit_dominance[0].mean():.3f} +/- {self.logit_dominance[0].std():.3f}",
             f"  Late (t~1):  {self.logit_dominance[-1].mean():.3f} +/- {self.logit_dominance[-1].std():.3f}",
             f"",
-            f"Attention Entropy (H):",
-            f"  Early (t~0): {self.entropy[0].mean():.3f} +/- {self.entropy[0].std():.3f}",
-            f"  Late (t~1):  {self.entropy[-1].mean():.3f} +/- {self.entropy[-1].std():.3f}",
+            f"Attention Entropy (H / log n, normalized):",
+            f"  Early (t~0): {self.entropy[0].mean() / np.log(self.protein_length):.3f} +/- {self.entropy[0].std() / np.log(self.protein_length):.3f}",
+            f"  Late (t~1):  {self.entropy[-1].mean() / np.log(self.protein_length):.3f} +/- {self.entropy[-1].std() / np.log(self.protein_length):.3f}",
         ]
 
         if self.spatial_alignment is not None:
             lines.extend([
                 f"",
-                f"Spatial Alignment (rho):",
+                f"Spatial Alignment (rho, {self.spatial_alignment_label}):",
                 f"  Early (t~0): {self.spatial_alignment[0].mean():.3f} +/- {self.spatial_alignment[0].std():.3f}",
                 f"  Late (t~1):  {self.spatial_alignment[-1].mean():.3f} +/- {self.spatial_alignment[-1].std():.3f}",
             ])
@@ -218,6 +223,7 @@ class TrajectoryAnalyzer:
         gt_coords: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
         batch_idx: int = 0,
+        spatial_alignment_label: str = "vs. ground truth",
     ) -> TrajectoryMetrics:
         """
         Compute all three metrics across the captured trajectory.
@@ -227,6 +233,9 @@ class TrajectoryAnalyzer:
                        Required for spatial alignment metric.
             mask: Sequence mask, shape [b, n]. Optional.
             batch_idx: Which batch element to analyze (default 0).
+            spatial_alignment_label: Description of what rho is measured against,
+                                     shown in plot titles and summary output.
+                                     E.g. "vs. external GT" or "vs. final predicted structure".
 
         Returns:
             TrajectoryMetrics object with all computed metrics.
@@ -324,6 +333,7 @@ class TrajectoryAnalyzer:
             logit_dominance=R_all,
             entropy=H_all,
             spatial_alignment=rho_all,
+            spatial_alignment_label=spatial_alignment_label,
             num_layers=self.num_layers,
             num_heads=self.num_heads,
             protein_length=protein_length,

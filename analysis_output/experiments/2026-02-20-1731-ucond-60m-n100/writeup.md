@@ -6,6 +6,7 @@
 **Sampling:** SDE (sc), noise scale 0.45, log schedule, dt=0.01 (100 steps)
 **Capture:** every 5th timestep → 20 snapshots × 12 layers × 12 heads
 **Ground truth:** Retrospective (final generated structure used as GT for ρ)
+**Seed:** not set — run before seed control was added (artifacts are not exactly reproducible)
 
 ## Reproduce
 
@@ -70,6 +71,12 @@ The first layer acts as a **"geometric interpreter"** — heavily relying on pai
 3. The content score QK^T grows to match the geometric bias
 
 This suggests a **division of labour**: early layers bootstrap geometric information from pair distances, while later layers refine it with content-based attention that increasingly reflects the emerging structure.
+
+## Reproducibility
+
+The original artifacts in `analysis_output/artifacts/2026-02-20-1731-ucond-60m-n100/` were generated **before seed control was added** to `crystallization_analysis.py`. The random state at run time is unknown, so the exact structure and metrics cannot be recovered.
+
+Re-running `experiment.py` will produce a new, different (but fully reproducible) sample using seed 5. Qualitative conclusions from this writeup are expected to hold across seeds — the layer-depth and temporal patterns are structural properties of the model, not of a specific sample.
 
 ## Next experiments
 

@@ -8,6 +8,11 @@ Model: proteina_v1.3_DFS_60M_notri (60M params, no triangle updates)
 Protein length: 100 residues
 Sampling: SDE (sc), noise scale 0.45, log schedule, dt=0.01 (100 steps)
 Capture: every 5th timestep -> 20 snapshots x 12 layers x 12 heads
+Seed: 5 (config default)
+
+Note: The original artifacts in artifacts/ were generated before seed control was
+added to the analysis script, so they used an uncontrolled random state. Re-running
+this script with --seed 5 will produce a different (but now reproducible) structure.
 
 Run this script from the repo root to reproduce the experiment.
 Artifacts are saved to the corresponding artifacts directory.
@@ -39,6 +44,7 @@ def run(ckpt_path: str = DEFAULT_CKPT):
         "--output_dir", str(ARTIFACTS_DIR),
         "--capture_every_n", "5",
         "--dt", "0.01",
+        "--seed", "5",
     ]
 
     print(f"Running: {' '.join(cmd)}")

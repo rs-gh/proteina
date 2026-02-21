@@ -54,7 +54,7 @@ We provide a lightweight config (`inference_ucond_60m_notri`) that generates 2 p
 python proteinfoundation/inference.py --config_name inference_ucond_60m_notri
 ```
 
-This takes ~1-2 minutes on a single GPU. Generated PDB files are saved under `inference/inference_ucond_60m_notri/`.
+This takes a few seconds on a single GPU. Generated PDB files are saved under `inference/inference_ucond_60m_notri/`.
 
 ### What this config does
 

@@ -85,19 +85,21 @@ def plot_crystallization_trajectory(
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
 
-    # Panel 2: Entropy (H)
+    # Panel 2: Entropy (H), normalized by log(n) so range is [0, 1]
     ax = axes[1]
+    log_n = np.log(metrics.protein_length)
     for l_idx, l in enumerate(layers_to_plot):
-        mean_H = metrics.entropy[:, l, heads_to_plot].mean(axis=-1)
-        std_H = metrics.entropy[:, l, heads_to_plot].std(axis=-1)
+        mean_H = metrics.entropy[:, l, heads_to_plot].mean(axis=-1) / log_n
+        std_H = metrics.entropy[:, l, heads_to_plot].std(axis=-1) / log_n
 
         ax.plot(timesteps, mean_H, color=colors[l_idx], label=f'Layer {l}', linewidth=2)
         ax.fill_between(timesteps, mean_H - std_H, mean_H + std_H,
                        color=colors[l_idx], alpha=0.2)
 
     ax.set_xlabel('Timestep (t)')
-    ax.set_ylabel('H = -sum(p*log(p))')
-    ax.set_title('Attention Entropy (H)\nLower = More crystallized')
+    ax.set_ylabel('H / log(n)  [0 = sharp, 1 = uniform]')
+    ax.set_title('Attention Entropy (H / log n)\nLower = More crystallized')
+    ax.set_ylim(bottom=0)
     ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
 
@@ -114,7 +116,7 @@ def plot_crystallization_trajectory(
 
         ax.set_xlabel('Timestep (t)')
         ax.set_ylabel('rho (Pearson correlation)')
-        ax.set_title('Spatial Alignment (rho)\nHigher = Biologically accurate')
+        ax.set_title(f'Spatial Alignment (rho, {metrics.spatial_alignment_label})\nHigher = Biologically accurate')
         ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
 
@@ -174,12 +176,18 @@ def plot_layer_heatmap(
     else:
         data = data.mean(axis=-1)
 
+    # Normalize entropy by log(n) so the colorscale is length-independent
+    if metric_name == 'entropy':
+        data = data / np.log(metrics.protein_length)
+        label = 'Entropy H / log(n)  [0 = sharp, 1 = uniform]'
+
     # Transpose so layers are on y-axis, timesteps on x-axis
     data = data.T  # [L, T]
 
     fig, ax = plt.subplots(figsize=figsize)
 
-    im = ax.imshow(data, aspect='auto', cmap=cmap, origin='lower')
+    vmin, vmax = (0, 1) if metric_name == 'entropy' else (None, None)
+    im = ax.imshow(data, aspect='auto', cmap=cmap, origin='lower', vmin=vmin, vmax=vmax)
 
     # Set axis labels
     n_timesteps = len(metrics.timesteps)
@@ -307,10 +315,11 @@ def plot_crystallization_summary(
     layers = [0, metrics.num_layers // 2, metrics.num_layers - 1]
 
     # Trajectory plots
+    log_n = np.log(metrics.protein_length)
     for l_idx, l in enumerate(layers):
         ax1.plot(timesteps, metrics.logit_dominance[:, l, :].mean(axis=-1),
                 color=colors[l_idx], label=f'L{l}', linewidth=2)
-        ax2.plot(timesteps, metrics.entropy[:, l, :].mean(axis=-1),
+        ax2.plot(timesteps, metrics.entropy[:, l, :].mean(axis=-1) / log_n,
                 color=colors[l_idx], label=f'L{l}', linewidth=2)
         if has_spatial:
             ax3.plot(timesteps, metrics.spatial_alignment[:, l, :].mean(axis=-1),
@@ -321,13 +330,15 @@ def plot_crystallization_summary(
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    ax2.set_title('Entropy (H)')
+    ax2.set_title('Entropy (H / log n)')
     ax2.set_xlabel('Timestep')
+    ax2.set_ylabel('H / log(n)  [0 = sharp, 1 = uniform]')
+    ax2.set_ylim(bottom=0)
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
     if has_spatial:
-        ax3.set_title('Spatial Alignment (rho)')
+        ax3.set_title(f'Spatial Alignment (rho, {metrics.spatial_alignment_label})')
         ax3.set_xlabel('Timestep')
         ax3.legend()
         ax3.grid(True, alpha=0.3)
@@ -340,17 +351,17 @@ def plot_crystallization_summary(
     ax4.set_ylabel('Layer')
     plt.colorbar(im1, ax=ax4)
 
-    im2 = ax5.imshow(metrics.entropy.mean(axis=-1).T, aspect='auto',
-                     cmap='viridis', origin='lower')
-    ax5.set_title('H across Layers')
+    im2 = ax5.imshow(metrics.entropy.mean(axis=-1).T / log_n, aspect='auto',
+                     cmap='viridis', origin='lower', vmin=0, vmax=1)
+    ax5.set_title('H / log(n) across Layers')
     ax5.set_xlabel('Timestep')
     ax5.set_ylabel('Layer')
-    plt.colorbar(im2, ax=ax5)
+    plt.colorbar(im2, ax=ax5, label='H / log(n)')
 
     if has_spatial:
         im3 = ax6.imshow(metrics.spatial_alignment.mean(axis=-1).T, aspect='auto',
                          cmap='RdBu_r', origin='lower', vmin=-1, vmax=1)
-        ax6.set_title('rho across Layers')
+        ax6.set_title(f'rho across Layers ({metrics.spatial_alignment_label})')
         ax6.set_xlabel('Timestep')
         ax6.set_ylabel('Layer')
         plt.colorbar(im3, ax=ax6)

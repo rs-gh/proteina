@@ -17,9 +17,10 @@ This module provides the three core metrics for analyzing crystallization:
    - Measures if attention is biologically accurate
 """
 
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch import Tensor
 import numpy as np
 
@@ -65,6 +66,57 @@ def compute_logit_dominance(
     R = b_norm / (c_norm + eps)
 
     return R
+
+
+def compute_logit_dominance_centered(
+    qk_raw: Tensor,
+    bias: Tensor,
+    mask: Optional[Tensor] = None,
+    eps: float = 1e-8,
+) -> Tensor:
+    """
+    Compute row-centered Logit Dominance R_c per head.
+
+    Like compute_logit_dominance but subtracts the row mean before computing
+    Frobenius norms.  This accounts for the softmax invariance to row-wise
+    constant shifts: only the *within-row variance* of B and C actually
+    influences the attention pattern.
+
+    Args:
+        qk_raw: QK^T before scaling, shape [b, h, n, n]. This is C.
+        bias: Pair bias B, shape [b, h, n, n].
+        mask: Optional pair mask, shape [b, n, n] or [b, h, n, n].
+        eps: Small constant for numerical stability.
+
+    Returns:
+        R_c values per batch and head, shape [b, h].
+    """
+    assert qk_raw.shape == bias.shape, f"Shape mismatch: {qk_raw.shape} vs {bias.shape}"
+
+    if mask is not None:
+        if mask.dim() == 3:  # [b, n, n]
+            mask = mask.unsqueeze(1)  # [b, 1, n, n]
+        qk_raw = qk_raw * mask
+        bias = bias * mask
+        # Row mean over valid positions only
+        row_counts = mask.sum(dim=-1, keepdim=True).clamp(min=1)  # [b, 1/h, n, 1]
+    else:
+        row_counts = qk_raw.shape[-1]
+
+    # Subtract row means
+    qk_centered = qk_raw - qk_raw.sum(dim=-1, keepdim=True) / row_counts
+    bias_centered = bias - bias.sum(dim=-1, keepdim=True) / row_counts
+
+    # Re-apply mask (centering can introduce non-zero at masked positions)
+    if mask is not None:
+        qk_centered = qk_centered * mask
+        bias_centered = bias_centered * mask
+
+    c_norm = torch.norm(qk_centered, p='fro', dim=(-2, -1))  # [b, h]
+    b_norm = torch.norm(bias_centered, p='fro', dim=(-2, -1))  # [b, h]
+
+    R_c = b_norm / (c_norm + eps)
+    return R_c
 
 
 def compute_attention_entropy(
@@ -237,6 +289,241 @@ def compute_spatial_alignment(
         correlations = correlations.mean(dim=-1)  # [b]
 
     return correlations
+
+
+def _seqsep_range_mask(n: int, lo: int, hi: int, device) -> Tensor:
+    """Create [n, n] boolean mask for pairs where lo <= |i-j| < hi."""
+    i_idx = torch.arange(n, device=device).unsqueeze(1)
+    j_idx = torch.arange(n, device=device).unsqueeze(0)
+    sep = (i_idx - j_idx).abs()
+    return (sep >= lo) & (sep < hi)
+
+
+def compute_contact_map(
+    dist_matrix: Tensor,
+    threshold: float = 0.8,
+    min_seqsep: int = 6,
+) -> Tensor:
+    """
+    Compute binary contact map from a CA/Cbeta distance matrix.
+
+    A contact is defined as dist < threshold with |i-j| >= min_seqsep,
+    following the convention of Rao et al. (2020) "Transformer protein language
+    models are unsupervised structure learners."
+
+    Args:
+        dist_matrix: Pairwise distances, shape [b, n, n].
+                     Units should match threshold (default nm, 0.8nm = 8 Angstroms).
+        threshold: Distance threshold for contacts (default 0.8 nm = 8 Angstroms).
+        min_seqsep: Minimum sequence separation to avoid counting local backbone contacts.
+
+    Returns:
+        Binary contact map, shape [b, n, n].
+    """
+    b, n, _ = dist_matrix.shape
+    device = dist_matrix.device
+
+    contacts = (dist_matrix < threshold) & (dist_matrix > 0)
+
+    seqsep_mask = _seqsep_range_mask(n, min_seqsep, n, device)  # |i-j| >= min_seqsep
+    contacts = contacts & seqsep_mask.unsqueeze(0)
+
+    return contacts
+
+
+def compute_contact_precision(
+    attn_matrix: Tensor,
+    contact_map: Tensor,
+    k: Optional[int] = None,
+    min_seqsep: int = 6,
+    apply_apc: bool = True,
+    eps: float = 1e-8,
+) -> Tensor:
+    """
+    Compute Precision@k contact prediction from an attention matrix.
+
+    Inspired by Rao et al. (2020) "Transformer protein language models are
+    unsupervised structure learners," which showed that PLM attention heads
+    predict contacts with Precision@L/5 competitive with co-evolutionary methods.
+
+    We use this to compare:
+      - Full attention (C+B): how much do combined scores predict contacts?
+      - C-only attention (softmax(QK^T * scale)): does content score learn geometry?
+      - B-only attention (softmax(B)): does the geometric bias alone predict contacts?
+
+    Args:
+        attn_matrix: Attention weights (post-softmax), shape [b, h, n, n] or [b, n, n].
+                     Can be full attention, C-only, or B-only (caller computes these).
+        contact_map: Binary contact map (1=contact), shape [b, n, n].
+                     Use compute_contact_map() to generate from distance matrix.
+        k: Number of top pairs to evaluate. If None, uses n//5 (Precision@L/5).
+        min_seqsep: Minimum sequence separation for evaluated pairs (avoid local backbone).
+        apply_apc: If True, apply Average Product Correction (APC) before ranking.
+                   APC removes background marginal distributions, improving precision.
+        eps: Small constant for numerical stability.
+
+    Returns:
+        Precision@k per batch and head, shape [b, h].
+        Higher values mean the attention better predicts 3D contacts.
+    """
+    if attn_matrix.dim() == 3:
+        attn_matrix = attn_matrix.unsqueeze(1)  # [b, n, n] → [b, 1, n, n]
+
+    b, h, n, _ = attn_matrix.shape
+    device = attn_matrix.device
+
+    if k is None:
+        k = max(1, n // 5)
+
+    # Upper triangle with min_seqsep: only evaluate pairs (i, j) where j >= i + min_seqsep
+    j_idx = torch.arange(n, device=device).unsqueeze(0)
+    i_idx = torch.arange(n, device=device).unsqueeze(1)
+    eval_mask = (j_idx - i_idx) >= min_seqsep  # [n, n]
+
+    precision = torch.zeros(b, h, device=device)
+
+    for bi in range(b):
+        contacts_flat = contact_map[bi][eval_mask].float()  # [num_valid]
+        num_valid = eval_mask.sum().item()
+
+        if num_valid < k:
+            continue
+
+        for hi in range(h):
+            A = attn_matrix[bi, hi].float()  # [n, n]
+
+            # Symmetrize: high attention in either direction counts as a contact prediction
+            A_sym = (A + A.T) / 2
+
+            # APC correction: A_apc[i,j] = A[i,j] - row_mean[i] * col_mean[j] / total_mean
+            # Removes background marginal signal, improving contact-specific precision
+            if apply_apc:
+                row_mean = A_sym.mean(dim=-1, keepdim=True)   # [n, 1]
+                col_mean = A_sym.mean(dim=-2, keepdim=True)   # [1, n]
+                total_mean = A_sym.mean()
+                A_sym = A_sym - (row_mean * col_mean) / (total_mean + eps)
+
+            # Extract scores for valid (upper-triangle, min-seqsep) pairs
+            scores = A_sym[eval_mask]  # [num_valid]
+
+            # Top-k pairs by score
+            actual_k = min(k, num_valid)
+            _, top_idx = scores.topk(actual_k)
+
+            # Precision: fraction of top-k that are contacts
+            precision[bi, hi] = contacts_flat[top_idx].mean()
+
+    return precision
+
+
+def compute_seqsep_metrics(
+    qk_raw: Tensor,
+    bias: Tensor,
+    attn_weights: Tensor,
+    gt_distance_matrix: Optional[Tensor] = None,
+    mask: Optional[Tensor] = None,
+    bins: Optional[List[Tuple[int, int]]] = None,
+    eps: float = 1e-8,
+) -> Dict[str, Dict[str, Optional[Tensor]]]:
+    """
+    Compute R, H, rho decomposed by sequence separation |i-j|.
+
+    This directly tests the proposal's central hypothesis: does the geometric
+    bias B matter more for long-range interactions than short-range ones?
+    Expected result: R is higher in the long-range bin (geometry is more important
+    when sequence context alone cannot determine proximity).
+
+    Args:
+        qk_raw: QK^T before scaling, shape [b, h, n, n].
+        bias: Pair bias B, shape [b, h, n, n].
+        attn_weights: Post-softmax attention, shape [b, h, n, n].
+        gt_distance_matrix: GT distance matrix, shape [b, n, n]. Optional.
+        mask: Optional pair mask [b, n, n] or sequence mask [b, n].
+        bins: List of (lo, hi) sequence separation bins (hi is exclusive).
+              Default: [(1, 7), (7, 24), (24, 10000)] for local/medium/long-range.
+        eps: Small constant for stability.
+
+    Returns:
+        Dict mapping bin_label → {'R': Tensor[b,h], 'R_centered': Tensor[b,h],
+            'H': Tensor[b,h], 'rho': Tensor[b,h] or None}
+    """
+    if bins is None:
+        bins = [(1, 7), (7, 24), (24, 10000)]
+        bin_labels = ['local (1-6)', 'medium (7-23)', 'long (>=24)']
+    else:
+        bin_labels = [f'sep{lo}-{hi-1}' for lo, hi in bins]
+
+    b, h, n, _ = qk_raw.shape
+    device = qk_raw.device
+
+    results: Dict[str, Dict[str, Optional[Tensor]]] = {}
+
+    for (lo, hi), label in zip(bins, bin_labels):
+        sep_mask_2d = _seqsep_range_mask(n, lo, min(hi, n), device)  # [n, n]
+
+        # Build [b, h, n, n] combined mask for R and H computations
+        sep_mask_bhnn = sep_mask_2d.float().unsqueeze(0).unsqueeze(0)  # [1, 1, n, n]
+
+        if mask is not None:
+            if mask.dim() == 3:  # [b, n, n] pair mask
+                pair_mask_bhnn = mask.unsqueeze(1) * sep_mask_bhnn  # [b, 1, n, n]
+            else:  # [b, n] sequence mask
+                seq_pair = mask[:, :, None] * mask[:, None, :]  # [b, n, n]
+                pair_mask_bhnn = seq_pair.unsqueeze(1).float() * sep_mask_bhnn  # [b, 1, n, n]
+        else:
+            pair_mask_bhnn = sep_mask_bhnn.expand(b, 1, n, n)
+
+        # R: Frobenius norm ratio, restricted to this seqsep bin
+        qk_m = qk_raw * pair_mask_bhnn
+        bias_m = bias * pair_mask_bhnn
+        c_norm = torch.norm(qk_m, p='fro', dim=(-2, -1))   # [b, h]
+        b_norm = torch.norm(bias_m, p='fro', dim=(-2, -1))  # [b, h]
+        R_bin = b_norm / (c_norm + eps)
+
+        # R_centered: row-centered variant (softmax-aware)
+        row_counts = pair_mask_bhnn.sum(dim=-1, keepdim=True).clamp(min=1)
+        qk_c = qk_m - qk_m.sum(dim=-1, keepdim=True) / row_counts
+        bias_c = bias_m - bias_m.sum(dim=-1, keepdim=True) / row_counts
+        qk_c = qk_c * pair_mask_bhnn
+        bias_c = bias_c * pair_mask_bhnn
+        c_norm_c = torch.norm(qk_c, p='fro', dim=(-2, -1))
+        b_norm_c = torch.norm(bias_c, p='fro', dim=(-2, -1))
+        R_bin_centered = b_norm_c / (c_norm_c + eps)
+
+        # H: entropy of attention re-normalized within this seqsep bin
+        # This is H(attention | key in bin), measuring how "decided" the model
+        # is about which contacts within this range to attend to.
+        attn_m = attn_weights * pair_mask_bhnn  # [b, h, n, n]
+        row_sum = attn_m.sum(dim=-1, keepdim=True)  # [b, h, n, 1]
+        attn_renorm = attn_m / (row_sum + eps)
+        # 0 * log(0) = 0 by convention; handle via masking
+        log_p = torch.where(
+            attn_renorm > eps,
+            torch.log(attn_renorm.clamp(min=eps)),
+            torch.zeros_like(attn_renorm),
+        )
+        H_per_q = -(attn_renorm * log_p).sum(dim=-1)  # [b, h, n]
+        # Only average over query rows that have at least one valid key in this bin
+        valid_queries = (row_sum.squeeze(-1) > eps).float()  # [b, h, n]
+        H_bin = (H_per_q * valid_queries).sum(dim=-1) / (valid_queries.sum(dim=-1) + eps)
+
+        # rho: spatial alignment restricted to pairs in this seqsep bin
+        rho_bin = None
+        if gt_distance_matrix is not None:
+            sep_b = sep_mask_2d.unsqueeze(0).expand(b, n, n)  # [b, n, n]
+            if mask is not None:
+                if mask.dim() == 3:
+                    spatial_mask = (sep_b & mask.bool()).float()
+                else:
+                    seq_pair = (mask[:, :, None] * mask[:, None, :]).bool()
+                    spatial_mask = (sep_b & seq_pair).float()
+            else:
+                spatial_mask = sep_b.float()
+            rho_bin = compute_spatial_alignment(attn_weights, gt_distance_matrix, spatial_mask)
+
+        results[label] = {'R': R_bin, 'R_centered': R_bin_centered, 'H': H_bin, 'rho': rho_bin}
+
+    return results
 
 
 def compute_all_metrics(

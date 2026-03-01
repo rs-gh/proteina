@@ -39,6 +39,7 @@ class AttentionCapture:
     layer_idx: Optional[int] = None
     timestep: Optional[float] = None
     timestep_idx: Optional[int] = None
+    node_repr: Optional[Tensor] = None
 
     def detach_and_clone(self) -> "AttentionCapture":
         """
@@ -52,6 +53,7 @@ class AttentionCapture:
             layer_idx=self.layer_idx,
             timestep=self.timestep,
             timestep_idx=self.timestep_idx,
+            node_repr=self.node_repr.detach().clone() if self.node_repr is not None else None,
         )
 
     def to_cpu(self) -> "AttentionCapture":
@@ -63,6 +65,7 @@ class AttentionCapture:
             layer_idx=self.layer_idx,
             timestep=self.timestep,
             timestep_idx=self.timestep_idx,
+            node_repr=self.node_repr.cpu() if self.node_repr is not None else None,
         )
 
     def reduce_heads(self, method: str = "mean") -> "AttentionCapture":
@@ -89,6 +92,34 @@ class AttentionCapture:
 
 
 @dataclass
+class BiasAblationConfig:
+    """
+    Configuration for pair bias ablation experiments.
+
+    Controls when pair bias B is zeroed out during generation, enabling
+    causal testing of which (layer, timestep) regions require geometric bias.
+
+    Attributes:
+        enabled: Whether ablation is active
+        ablate_layers: Set of layer indices where B should be zeroed. None = all layers.
+        ablate_t_min: Minimum timestep for ablation (B=0 when t >= t_min)
+        ablate_t_max: Maximum timestep for ablation (B=0 when t <= t_max)
+    """
+    enabled: bool = False
+    ablate_layers: Optional[set] = None
+    ablate_t_min: float = 0.0
+    ablate_t_max: float = 1.0
+
+    def should_ablate(self, layer_idx: int, timestep: float) -> bool:
+        """Check if pair bias should be zeroed for this (layer, timestep)."""
+        if not self.enabled:
+            return False
+        if self.ablate_layers is not None and layer_idx not in self.ablate_layers:
+            return False
+        return self.ablate_t_min <= timestep <= self.ablate_t_max
+
+
+@dataclass
 class CrystallizationTracker:
     """
     Tracks attention captures across the flow-matching trajectory.
@@ -103,6 +134,8 @@ class CrystallizationTracker:
         capture_every_n: Only capture every N timesteps (for memory efficiency)
         reduce_heads: Whether to reduce across heads to save memory
         move_to_cpu: Whether to move captures to CPU immediately
+        bias_ablation: Configuration for pair bias ablation experiments
+        capture_node_repr: Whether to capture node representations for structure lens
     """
     enabled: bool = False
     captures: Dict[int, Dict[int, AttentionCapture]] = field(default_factory=dict)
@@ -111,6 +144,8 @@ class CrystallizationTracker:
     capture_every_n: int = 1
     reduce_heads: bool = False
     move_to_cpu: bool = True
+    bias_ablation: BiasAblationConfig = field(default_factory=BiasAblationConfig)
+    capture_node_repr: bool = False
 
     def enable(self, capture_every_n: int = 1, reduce_heads: bool = False, move_to_cpu: bool = True):
         """
@@ -218,7 +253,7 @@ class CrystallizationTracker:
         total_bytes = 0
         for timestep_dict in self.captures.values():
             for capture in timestep_dict.values():
-                for tensor in [capture.qk_raw, capture.bias, capture.attn_weights]:
+                for tensor in [capture.qk_raw, capture.bias, capture.attn_weights, capture.node_repr]:
                     if tensor is not None:
                         total_bytes += tensor.numel() * tensor.element_size()
         return total_bytes / (1024 * 1024)

@@ -17,16 +17,24 @@ Key components:
 
 from .crystallization_hooks import (
     AttentionCapture,
+    BiasAblationConfig,
     CrystallizationTracker,
 )
 from .crystallization_metrics import (
     compute_logit_dominance,
+    compute_logit_dominance_centered,
     compute_attention_entropy,
     compute_spatial_alignment,
     compute_gt_distance_matrix,
+    compute_contact_map,
+    compute_contact_precision,
+    compute_seqsep_metrics,
 )
 from .trajectory_analyzer import (
     TrajectoryMetrics,
+    SeqsepMetrics,
+    ContactPrecisionMetrics,
+    RegisterMetrics,
     TrajectoryAnalyzer,
 )
 from .visualization import (
@@ -34,23 +42,41 @@ from .visualization import (
     plot_layer_heatmap,
     plot_attention_heatmap,
     plot_crystallization_summary,
+    plot_per_head_trajectory,
+    plot_seqsep_decomposition,
+    plot_contact_precision_trajectory,
+    plot_register_heatmap,
+    plot_attention_decomposition_grid,
 )
 
 __all__ = [
     # Hooks
     "AttentionCapture",
+    "BiasAblationConfig",
     "CrystallizationTracker",
     # Metrics
     "compute_logit_dominance",
+    "compute_logit_dominance_centered",
     "compute_attention_entropy",
     "compute_spatial_alignment",
     "compute_gt_distance_matrix",
+    "compute_contact_map",
+    "compute_contact_precision",
+    "compute_seqsep_metrics",
     # Analyzer
     "TrajectoryMetrics",
+    "SeqsepMetrics",
+    "ContactPrecisionMetrics",
+    "RegisterMetrics",
     "TrajectoryAnalyzer",
     # Visualization
     "plot_crystallization_trajectory",
     "plot_layer_heatmap",
     "plot_attention_heatmap",
     "plot_crystallization_summary",
+    "plot_per_head_trajectory",
+    "plot_seqsep_decomposition",
+    "plot_contact_precision_trajectory",
+    "plot_register_heatmap",
+    "plot_attention_decomposition_grid",
 ]

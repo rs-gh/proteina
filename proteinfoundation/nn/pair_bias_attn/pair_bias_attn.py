@@ -72,6 +72,7 @@ class PairBiasAttention(nn.Module):
         pair_feats: Optional[Tensor],
         mask: Optional[Tensor],
         capture: Optional["AttentionCapture"] = None,
+        ablate_bias: bool = False,
     ) -> Tensor:
         """Multi-head scalar Attention Layer
 
@@ -79,6 +80,7 @@ class PairBiasAttention(nn.Module):
         :param pair_feats: pair features of shape (b,n,n,d_e)
         :param mask: boolean tensor of node adjacencies
         :param capture: optional AttentionCapture to store intermediates for analysis
+        :param ablate_bias: if True, zero out pair bias B for causal ablation
         :return:
         """
         assert exists(self.to_bias) or not exists(pair_feats)
@@ -96,7 +98,7 @@ class PairBiasAttention(nn.Module):
         q, k, v, g = map(
             lambda t: rearrange(t, "b ... (h d) -> b h ... d", h=h), (q, k, v, g)
         )
-        attn_feats = self._attn(q, k, v, b, mask, capture)
+        attn_feats = self._attn(q, k, v, b, mask, capture, ablate_bias=ablate_bias)
         attn_feats = rearrange(
             torch.sigmoid(g) * attn_feats, "b h n d -> b n (h d)", h=h
         )
@@ -110,6 +112,7 @@ class PairBiasAttention(nn.Module):
         b,
         mask: Optional[Tensor],
         capture: Optional["AttentionCapture"] = None,
+        ablate_bias: bool = False,
     ) -> Tensor:
         """Perform attention update
 
@@ -120,6 +123,7 @@ class PairBiasAttention(nn.Module):
             b: Pair bias, shape [b, h, n, n] or scalar 0
             mask: Optional pair mask, shape [b, n, n]
             capture: Optional AttentionCapture to store intermediates for analysis
+            ablate_bias: If True, zero out pair bias B for causal ablation
 
         Returns:
             Attention output, shape [b, h, n, d]
@@ -134,10 +138,13 @@ class PairBiasAttention(nn.Module):
             mask = rearrange(mask, "b i j -> b () i j")
             sim = sim.masked_fill(~mask, max_neg_value(sim))
 
-        # Compute attention weights
-        attn = torch.softmax(sim + b, dim=-1)
+        # Ablate pair bias if requested (causal intervention)
+        bias_for_attn = 0 if ablate_bias else b
 
-        # Capture intermediates if requested
+        # Compute attention weights
+        attn = torch.softmax(sim + bias_for_attn, dim=-1)
+
+        # Capture intermediates if requested (always capture original bias, not ablated)
         if capture is not None:
             capture.qk_raw = qk_raw
             capture.bias = b if isinstance(b, Tensor) else None

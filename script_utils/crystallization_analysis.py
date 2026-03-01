@@ -54,7 +54,12 @@ from proteinfoundation.analysis import (
     TrajectoryMetrics,
     plot_crystallization_trajectory,
     plot_crystallization_summary,
+    plot_per_head_trajectory,
+    plot_seqsep_decomposition,
+    plot_contact_precision_trajectory,
+    plot_attention_decomposition_grid,
     compute_gt_distance_matrix,
+    compute_contact_map,
 )
 
 
@@ -160,6 +165,27 @@ def main():
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Device to run on",
+    )
+    # Extended analysis flags (Exp 2/3/4/5/7)
+    parser.add_argument(
+        "--compute_seqsep",
+        action="store_true",
+        help="Compute R/H/rho decomposed by sequence separation bin (local/medium/long-range)",
+    )
+    parser.add_argument(
+        "--compute_contact_precision",
+        action="store_true",
+        help="Compute Precision@L/5 contact prediction for full, B-only, and C-only attention",
+    )
+    parser.add_argument(
+        "--compute_register_metrics",
+        action="store_true",
+        help="Compute register token attention fraction across the trajectory",
+    )
+    parser.add_argument(
+        "--plot_grid",
+        action="store_true",
+        help="Generate AF2 Figure 12-style (layers x timesteps) attention heatmap grid",
     )
     args = parser.parse_args()
 
@@ -320,6 +346,112 @@ def main():
         pdb_path = output_dir / "generated_structure.pdb"
         write_prot_to_pdb(atom37[0].numpy(), str(pdb_path), overwrite=True, no_indexing=True)
         logger.info(f"Generated structure saved to {pdb_path}")
+
+    # --- Extended analyses (Exp 2/3/4/5/7) ---
+
+    # Per-head visualization (Exp 2): existing metrics already have per-head data [T, L, H];
+    # we just generate per-head trajectory plots for each layer.
+    per_head_dir = output_dir / "per_head"
+    if any([args.compute_seqsep, args.compute_contact_precision,
+            args.compute_register_metrics, args.plot_grid]):
+        per_head_dir.mkdir(exist_ok=True)
+        for l in range(num_layers):
+            for metric in ['entropy', 'logit_dominance']:
+                fig = plot_per_head_trajectory(metrics, layer=l, metric_name=metric)
+                import matplotlib
+                matplotlib.pyplot.close(fig)
+            if metrics.spatial_alignment is not None:
+                fig = plot_per_head_trajectory(metrics, layer=l, metric_name='spatial_alignment')
+                import matplotlib
+                matplotlib.pyplot.close(fig)
+        # Save representative per-head plots for first, middle, last layers
+        for l, name in [(0, 'first'), (num_layers // 2, 'mid'), (num_layers - 1, 'last')]:
+            fig = plot_per_head_trajectory(
+                metrics, layer=l, metric_name='entropy',
+                save_path=per_head_dir / f"per_head_entropy_layer{l}_{name}.png",
+            )
+            import matplotlib
+            matplotlib.pyplot.close(fig)
+        logger.info(f"Per-head trajectory plots saved to {per_head_dir}")
+
+    # Sequence-separation decomposition (Exp 3)
+    if args.compute_seqsep:
+        logger.info("Computing sequence-separation decomposition...")
+        seqsep_metrics = analyzer.compute_seqsep_trajectory(gt_coords, mask)
+        seqsep_path = output_dir / "seqsep_metrics.npz"
+        seqsep_metrics.save(str(seqsep_path))
+        logger.info(f"Saved seqsep metrics to {seqsep_path}")
+
+        fig_seqsep = plot_seqsep_decomposition(
+            seqsep_metrics,
+            save_path=output_dir / "seqsep_decomposition.png",
+        )
+        import matplotlib
+        matplotlib.pyplot.close(fig_seqsep)
+        logger.info("Saved seqsep decomposition plot")
+
+    # Contact precision (Exp 4)
+    if args.compute_contact_precision and gt_coords is not None:
+        logger.info("Computing contact precision (Precision@L/5)...")
+        # Build contact map from GT coordinates (0.8 nm = 8 Angstroms threshold)
+        gt_dist_for_contacts = compute_gt_distance_matrix(gt_coords.cpu(), mask.cpu())
+        contact_map = compute_contact_map(gt_dist_for_contacts, threshold=0.8)
+
+        mha = model.nn.transformer_layers[0].mhba.mha
+        head_dim = round(1.0 / (mha.scale ** 2))
+        prec_metrics = analyzer.compute_contact_precision_trajectory(
+            contact_map, head_dim=head_dim,
+        )
+        prec_path = output_dir / "contact_precision.npz"
+        prec_metrics.save(str(prec_path))
+        logger.info(f"Saved contact precision metrics to {prec_path}")
+
+        fig_prec = plot_contact_precision_trajectory(
+            prec_metrics,
+            save_path=output_dir / "contact_precision.png",
+        )
+        import matplotlib
+        matplotlib.pyplot.close(fig_prec)
+        logger.info(
+            f"Saved contact precision plot "
+            f"(full={prec_metrics.precision_full[-1].mean():.3f}, "
+            f"B={prec_metrics.precision_b_only[-1].mean():.3f}, "
+            f"C={prec_metrics.precision_c_only[-1].mean():.3f} at t=1)"
+        )
+    elif args.compute_contact_precision and gt_coords is None:
+        logger.warning("--compute_contact_precision requires GT coordinates. "
+                       "Use --pdb_path or ensure retrospective GT is available.")
+
+    # Register token analysis (Exp 5)
+    if args.compute_register_metrics and num_registers > 0:
+        logger.info("Computing register token attention metrics...")
+        reg_metrics = analyzer.compute_register_metrics()
+        reg_path = output_dir / "register_metrics.npz"
+        reg_metrics.save(str(reg_path))
+        logger.info(
+            f"Saved register metrics to {reg_path} "
+            f"(mean register attention fraction: {reg_metrics.register_attn_fraction.mean():.3f})"
+        )
+    elif args.compute_register_metrics and num_registers == 0:
+        logger.warning("Model has no register tokens; skipping --compute_register_metrics")
+
+    # AF2 Figure 12-style attention grid (Exp 7)
+    if args.plot_grid:
+        logger.info("Generating attention decomposition grid (AF2 Figure 12 style)...")
+        gt_dist_cpu = compute_gt_distance_matrix(gt_coords.cpu(), mask.cpu()) if gt_coords is not None else None
+        contact_map_np = compute_contact_map(gt_dist_cpu, threshold=0.8)[0].numpy() if gt_dist_cpu is not None else None
+
+        for mode in ['attn', 'bias', 'content']:
+            fig_grid = plot_attention_decomposition_grid(
+                tracker,
+                num_registers=num_registers,
+                contact_map=contact_map_np,
+                show_mode=mode,
+                save_path=output_dir / f"attention_grid_{mode}.png",
+            )
+            import matplotlib
+            matplotlib.pyplot.close(fig_grid)
+        logger.info("Saved attention decomposition grids (attn, bias, content)")
 
     logger.info(f"\nAnalysis complete! Results saved to {output_dir}")
 

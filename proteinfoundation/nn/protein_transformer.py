@@ -201,6 +201,7 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
+        ablate_bias: bool = False,
     ):
         """
         Args:
@@ -209,13 +210,14 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
             pair_rep: Pair represnetation, shape [b, n, n, dim_pair]
             mask: Binary mask, shape [b, n]
             capture: Optional AttentionCapture to store intermediates for analysis
+            ablate_bias: If True, zero out pair bias B for causal ablation
 
         Returns:
             Updated sequence representation, shape [b, n, dim_token].
         """
         pair_mask = mask[:, :, None] * mask[:, None, :]  # [b, n, n]
         x = self.adaln(x, cond, mask)
-        x = self.mha(node_feats=x, pair_feats=pair_rep, mask=pair_mask, capture=capture)
+        x = self.mha(node_feats=x, pair_feats=pair_rep, mask=pair_mask, capture=capture, ablate_bias=ablate_bias)
         x = self.scale_output(x, cond, mask)
         return x * mask[..., None]
 
@@ -309,8 +311,9 @@ class MultiheadAttnAndTransition(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
+        ablate_bias: bool = False,
     ):
-        x_attn = self.mhba(x, pair_rep, cond, mask, capture=capture)
+        x_attn = self.mhba(x, pair_rep, cond, mask, capture=capture, ablate_bias=ablate_bias)
         if self.residual_mha:
             x_attn = x_attn + x
         return x_attn * mask[..., None]
@@ -328,6 +331,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
+        ablate_bias: bool = False,
     ):
         """
         Args:
@@ -336,17 +340,18 @@ class MultiheadAttnAndTransition(torch.nn.Module):
             mask: binary mask, shape [b, n]
             pair_rep: Pair representation (if provided, if no bias will be ignored), shape [b, n, n, dim_pair] or None
             capture: Optional AttentionCapture to store intermediates for analysis
+            ablate_bias: If True, zero out pair bias B for causal ablation
 
         Returns:
             Updated sequence representation, shape [b, n, dim].
         """
         x = x * mask[..., None]
         if self.parallel:
-            x = self._apply_mha(x, pair_rep, cond, mask, capture) + self._apply_transition(
+            x = self._apply_mha(x, pair_rep, cond, mask, capture, ablate_bias=ablate_bias) + self._apply_transition(
                 x, cond, mask
             )
         else:
-            x = self._apply_mha(x, pair_rep, cond, mask, capture)
+            x = self._apply_mha(x, pair_rep, cond, mask, capture, ablate_bias=ablate_bias)
             x = self._apply_transition(x, cond, mask)
         return x * mask[..., None]
 
@@ -724,9 +729,21 @@ class ProteinTransformerAF3(torch.nn.Module):
                 from proteinfoundation.analysis.crystallization_hooks import AttentionCapture
                 capture = AttentionCapture()
 
+            # Check if pair bias should be ablated for this (layer, timestep)
+            ablate_bias = False
+            if tracker is not None:
+                ablate_bias = tracker.bias_ablation.should_ablate(
+                    i, tracker.current_timestep
+                )
+
             seqs = self.transformer_layers[i](
-                seqs, pair_rep, c, mask, capture=capture
+                seqs, pair_rep, c, mask, capture=capture, ablate_bias=ablate_bias,
             )  # [b, n, token_dim]
+
+            # Capture node representation for structure lens (after register stripping)
+            if should_capture and capture is not None and tracker.capture_node_repr:
+                # Store raw seqs including registers; we'll strip them during analysis
+                capture.node_repr = seqs
 
             # Store capture in tracker
             if should_capture and capture is not None:

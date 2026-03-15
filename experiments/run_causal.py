@@ -117,7 +117,7 @@ def compute_structural_metrics(coords: torch.Tensor, mask: torch.Tensor) -> dict
     }
 
 
-def run(model: str, output_dir: Path, seeds: list = SEEDS):
+def run(model: str, output_dir: Path, seeds: list = SEEDS, conditions=None):
     """Run bias ablation experiments."""
     sys.path.insert(0, str(REPO_ROOT))
     import os
@@ -151,7 +151,8 @@ def run(model: str, output_dir: Path, seeds: list = SEEDS):
     model_net.to(device)
 
     sampling_args = cfg.sampling_caflow
-    conditions = get_conditions(model)
+    if conditions is None:
+        conditions = get_conditions(model)
     all_results = {}
 
     for condition in conditions:

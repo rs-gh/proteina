@@ -66,88 +66,169 @@ def get_representative_layers(num_layers: int):
     return [0, num_layers // 2, num_layers - 1]
 
 
-def fig1_trajectory(models: Dict[str, dict], output_dir: Path):
+# Peak R_c layers per model (determined empirically from t=1 data)
+PEAK_RC_LAYERS = {
+    '60m': 0,         # R_c=34.9 at t=1
+    '200m_notri': 0,  # R_c=4.3 at t=1 (L2 close at 3.9)
+    '200m_tri': 9,    # R_c=27.0 at t=1 (L7=10.5 also high)
+    '400m_tri': 2,    # R_c=29.4 at t=1
+}
+
+
+def get_key_layers(model: str, num_layers: int):
+    """Return [peak_Rc_layer, first_or_alternate, last] for line plots."""
+    peak = PEAK_RC_LAYERS.get(model, 0)
+    last = num_layers - 1
+    # Pick a contrasting layer: if peak is L0, show middle; if peak is deep, show L0
+    if peak == 0:
+        alt = num_layers // 2
+    else:
+        alt = 0
+    return sorted(set([peak, alt, last]))
+
+
+def fig1_Rc_lines(models: Dict[str, dict], output_dir: Path):
     """
-    Figure 1: Core trajectory metrics (R_c, H, rho) for all models.
-    Layout: 4 rows (models) x 3 columns (R_c, H, rho).
+    Figure 1a: R_c line plots for model-appropriate layers.
+    Shows peak R_c layer + contrasting layers per model.
     """
     available = [m for m in MODEL_ORDER if m in models]
     n_models = len(available)
 
-    fig, axes = plt.subplots(n_models, 3, figsize=(14, 3.5 * n_models),
-                              squeeze=False)
+    fig, axes = plt.subplots(1, n_models, figsize=(4 * n_models, 3.5), squeeze=False)
+
+    for col, model in enumerate(available):
+        d = models[model]
+        timesteps = d['timesteps']
+        num_layers = d['R_mean'].shape[1]
+        layers = get_key_layers(model, num_layers)
+        colors = plt.cm.viridis(np.linspace(0, 1, len(layers)))
+
+        use_Rc = 'Rc_mean' in d
+        R_mean = d['Rc_mean'] if use_Rc else d['R_mean']
+        R_std = d['Rc_std'] if use_Rc else d['R_std']
+
+        for l_idx, l in enumerate(layers):
+            r_m = R_mean[:, l, :].mean(axis=-1)
+            r_s = R_std[:, l, :].mean(axis=-1)
+            peak = PEAK_RC_LAYERS.get(model, 0)
+            lw = 2.0 if l == peak else 1.2
+            axes[0, col].plot(timesteps, r_m, color=colors[l_idx],
+                              label=f'L{l}' + (' *' if l == peak else ''),
+                              linewidth=lw)
+            axes[0, col].fill_between(timesteps, r_m - r_s, r_m + r_s,
+                                       color=colors[l_idx], alpha=0.15)
+
+        axes[0, col].axhline(y=1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
+        axes[0, col].set_title(MODEL_LABELS[model])
+        axes[0, col].set_xlabel('Timestep ($t$)')
+        axes[0, col].legend(loc='best', fontsize=7)
+        axes[0, col].grid(True, alpha=0.2)
+
+    axes[0, 0].set_ylabel('$R_c$')
+    n_seeds = len(models[available[0]].get('seeds', [0]))
+    fig.suptitle(f'Row-centred logit dominance $R_c$ ($n$=100, {n_seeds} seeds, * = peak layer)',
+                 fontsize=11, y=1.03)
+    plt.tight_layout()
+    path = output_dir / "fig1a-Rc-lines.png"
+    plt.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved {path}")
+
+
+def fig1_Rc_heatmaps(models: Dict[str, dict], output_dir: Path):
+    """
+    Figure 1b: R_c heatmaps (all layers x timesteps) for each model.
+    Shows which layer is the 'geometric interpreter' at each point in generation.
+    """
+    available = [m for m in MODEL_ORDER if m in models]
+    n_models = len(available)
+
+    fig, axes = plt.subplots(1, n_models, figsize=(4 * n_models, 4), squeeze=False)
+
+    for col, model in enumerate(available):
+        d = models[model]
+        timesteps = d['timesteps']
+
+        use_Rc = 'Rc_mean' in d
+        R_mean = d['Rc_mean'] if use_Rc else d['R_mean']
+
+        # Mean over heads: [T, L]
+        rc_map = R_mean.mean(axis=-1)
+
+        im = axes[0, col].imshow(
+            rc_map.T, aspect='auto', origin='lower',
+            extent=[timesteps[0], timesteps[-1], -0.5, rc_map.shape[1] - 0.5],
+            cmap='magma', vmin=0, vmax=min(rc_map.max(), 40))
+        axes[0, col].set_title(MODEL_LABELS[model])
+        axes[0, col].set_xlabel('Timestep ($t$)')
+        plt.colorbar(im, ax=axes[0, col], shrink=0.8)
+
+    axes[0, 0].set_ylabel('Layer')
+    n_seeds = len(models[available[0]].get('seeds', [0]))
+    fig.suptitle(f'$R_c$ heatmap — all layers ($n$=100, {n_seeds} seeds, mean over heads)',
+                 fontsize=11, y=1.03)
+    plt.tight_layout()
+    path = output_dir / "fig1b-Rc-heatmaps.png"
+    plt.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved {path}")
+
+
+def fig_supplementary_H_rho(models: Dict[str, dict], output_dir: Path):
+    """
+    Supplementary figure: Entropy and spatial alignment (moved from main Fig 1).
+    """
+    available = [m for m in MODEL_ORDER if m in models]
+    n_models = len(available)
+
+    fig, axes = plt.subplots(n_models, 2, figsize=(10, 3 * n_models), squeeze=False)
 
     for row, model in enumerate(available):
         d = models[model]
         timesteps = d['timesteps']
-        n_seeds = len(d.get('seeds', [0]))
-
-        # Determine number of layers from R_mean shape
         num_layers = d['R_mean'].shape[1]
-        layers = get_representative_layers(num_layers)
+        layers = get_key_layers(model, num_layers)
         colors = plt.cm.viridis(np.linspace(0, 1, len(layers)))
 
-        # Use R_c if available, otherwise fall back to R
-        use_Rc = 'Rc_mean' in d
-        R_mean = d['Rc_mean'] if use_Rc else d['R_mean']
-        R_std = d['Rc_std'] if use_Rc else d['R_std']
-        r_label = '$R_c$' if use_Rc else '$R$'
+        protein_length = int(d.get('protein_length', 100))
+        log_n = np.log(protein_length) if protein_length > 1 else 1.0
 
         for l_idx, l in enumerate(layers):
-            # R_c / R — mean over heads
-            r_m = R_mean[:, l, :].mean(axis=-1)
-            r_s = R_std[:, l, :].mean(axis=-1)
-            axes[row, 0].plot(timesteps, r_m, color=colors[l_idx],
-                              label=f'L{l}', linewidth=1.5)
-            axes[row, 0].fill_between(timesteps, r_m - r_s, r_m + r_s,
-                                       color=colors[l_idx], alpha=0.15)
-
-            # Entropy — normalized by log(n)
-            protein_length = int(d.get('protein_length', 100))
-            log_n = np.log(protein_length) if protein_length > 1 else 1.0
             h_m = d['H_mean'][:, l, :].mean(axis=-1) / log_n
             h_s = d['H_std'][:, l, :].mean(axis=-1) / log_n
-            axes[row, 1].plot(timesteps, h_m, color=colors[l_idx],
+            axes[row, 0].plot(timesteps, h_m, color=colors[l_idx],
                               label=f'L{l}', linewidth=1.5)
-            axes[row, 1].fill_between(timesteps, h_m - h_s, h_m + h_s,
+            axes[row, 0].fill_between(timesteps, h_m - h_s, h_m + h_s,
                                        color=colors[l_idx], alpha=0.15)
 
-            # Spatial alignment
             if 'rho_mean' in d:
                 rho_m = d['rho_mean'][:, l, :].mean(axis=-1)
                 rho_s = d['rho_std'][:, l, :].mean(axis=-1)
-                axes[row, 2].plot(timesteps, rho_m, color=colors[l_idx],
+                axes[row, 1].plot(timesteps, rho_m, color=colors[l_idx],
                                   label=f'L{l}', linewidth=1.5)
-                axes[row, 2].fill_between(timesteps, rho_m - rho_s, rho_m + rho_s,
+                axes[row, 1].fill_between(timesteps, rho_m - rho_s, rho_m + rho_s,
                                            color=colors[l_idx], alpha=0.15)
 
-        # Labels
-        axes[row, 0].set_ylabel(f'{MODEL_LABELS[model]}\n{r_label}')
-        axes[row, 1].set_ylabel('$\\hat{{H}}$')
-        if 'rho_mean' in d:
-            axes[row, 2].set_ylabel('$\\rho$')
-
-        # Reference lines
         axes[row, 0].axhline(y=1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
-        axes[row, 1].axhline(y=1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
-        axes[row, 2].axhline(y=0.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
-
-        for col in range(3):
-            axes[row, col].legend(loc='best')
-            axes[row, col].grid(True, alpha=0.2)
-
+        axes[row, 1].axhline(y=0.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
+        axes[row, 0].set_ylabel(f'{MODEL_LABELS[model]}\n$\\hat{{H}}$')
+        axes[row, 1].set_ylabel('$\\rho$')
+        for c in range(2):
+            axes[row, c].legend(loc='best', fontsize=7)
+            axes[row, c].grid(True, alpha=0.2)
         if row == 0:
-            axes[row, 0].set_title(f'Logit Dominance ({r_label})')
-            axes[row, 1].set_title('Normalised Entropy ($\\hat{{H}}$)')
-            axes[row, 2].set_title('Spatial Alignment ($\\rho$)')
+            axes[row, 0].set_title('Normalised Entropy ($\\hat{H}$)')
+            axes[row, 1].set_title('Spatial Alignment ($\\rho$)')
 
-    for col in range(3):
-        axes[-1, col].set_xlabel('Timestep ($t$)')
+    for c in range(2):
+        axes[-1, c].set_xlabel('Timestep ($t$)')
 
-    fig.suptitle(f'Core metrics across denoising trajectory ($n$=100, {n_seeds} seeds, shaded = $\\pm$1 std)',
-                 fontsize=12, y=1.01)
+    n_seeds = len(models[available[0]].get('seeds', [0]))
+    fig.suptitle(f'Supplementary: Entropy and spatial alignment ($n$=100, {n_seeds} seeds)',
+                 fontsize=11, y=1.01)
     plt.tight_layout()
-    path = output_dir / "fig1-trajectory-all-models.png"
+    path = output_dir / "fig-supp-H-rho.png"
     plt.savefig(path, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved {path}")
@@ -218,7 +299,7 @@ def fig3_contact_precision(models: Dict[str, dict], output_dir: Path):
         d = models[model]
         timesteps = d['timesteps']
         num_layers = d['prec_full_mean'].shape[1]
-        layers = get_representative_layers(num_layers)
+        layers = get_key_layers(model, num_layers)
         colors = plt.cm.viridis(np.linspace(0, 1, len(layers)))
 
         panels = [
@@ -418,10 +499,12 @@ if __name__ == "__main__":
 
     print(f"\nGenerating figures for {len(models)} models: {list(models.keys())}")
 
-    fig1_trajectory(models, output_dir)
+    fig1_Rc_lines(models, output_dir)
+    fig1_Rc_heatmaps(models, output_dir)
     fig2_seqsep(models, output_dir)
     fig3_contact_precision(models, output_dir)
     fig5_structure_lens(output_dir)
     fig6_R_vs_Rc(models, output_dir)
+    fig_supplementary_H_rho(models, output_dir)
 
     print(f"\nAll figures saved to {output_dir}")

@@ -21,44 +21,47 @@ in Flow-Based Protein Structure Generation?}
 
 % ============================================================
 \begin{abstract}
-Proteina is a flow-based generative model for protein backbone structure that achieves state-of-the-art quality without explicit geometric constraints --- geometry enters only as an additive pair bias $B$ to attention logits.
-We study how this geometric bias interacts with learned content representations during the denoising trajectory, using three complementary lenses: pre-softmax signal decomposition, post-softmax functional evaluation, and causal ablation.
-Across four model scales (60M--400M parameters), we find that (i)~the pair bias alone predicts contacts $5\times$ better than the content score at all scales, (ii)~$B$ is dispensable during early generation but essential during late structural refinement --- a causal finding that replicates identically across all four models, and (iii)~despite this causal equivalence, the descriptive geometry--content balance is strongly scale-dependent.
-This dissociation between descriptive signal magnitude and causal necessity demonstrates that multi-lens interpretability is essential for understanding the role of geometric inductive biases in nonlinear generative systems.
+Proteina is a flow-based generative model for protein backbone structure where geometry enters only as an additive pair bias $B$ to attention scores.
+We study how this bias interacts with learned content representations across the generation trajectory using four complementary lenses: pre-softmax signal decomposition, post-softmax contact prediction, causal ablation, and intermediate-layer structure decoding.
+Across four model scales (60M--400M parameters), we find that (i)~$B$-only attention predicts contacts 5--20$\times$ above random at all scales, (ii)~$B$ is dispensable during early generation but essential during late refinement --- replicating identically across all four models, and (iii)~despite this causal equivalence, the descriptive balance varies over 100$\times$ across scales.
+Every model concentrates geometric dominance in a ``geometric interpreter'' layer, but which layer this is depends on architecture: Layer~0 in models without triangle updates, deeper layers in models with them.
+This dissociation between descriptive signal and causal necessity demonstrates the importance of multi-lens interpretability for understanding geometric inductive biases.
 \end{abstract}
 
 % ============================================================
 \section{Introduction}
 
 Generative models for protein backbone structure have advanced rapidly, with flow matching emerging as a leading paradigm~\citep{lipman2023flow}.
-Proteina~\citep{geffner2025proteina}, an ICLR 2025 Oral paper, scales flow-based protein generation to state-of-the-art quality by combining a transformer backbone with \emph{Pair Bias Attention} (PBA) --- a mechanism that fuses learned content scores with geometric pair biases encoding inter-residue distances and sequence separation.
+Proteina~\citep{geffner2025proteina} scales flow-based protein generation to state-of-the-art quality by combining a transformer backbone with \emph{Pair Bias Attention} --- a mechanism that fuses learned content scores with geometric pair biases.
 
-Proteina is notable in the context of geometric deep learning because it achieves strong performance \emph{without} explicit geometric constraints in its architecture.
 Unlike SE(3)-equivariant networks~\citep{thomas2018tensor,fuchs2020se3} or invariant point attention~\citep{jumper2021alphafold2}, Proteina's transformer layers are standard (non-equivariant) attention and MLP blocks.
-Geometry enters only through the pair bias $B$, an additive term to the pre-softmax attention logits derived from pairwise distances and sequence separation.
-Crucially, because $B$ is computed from SE(3)-invariant inputs (pairwise distances), it provides a \emph{soft invariant prior} --- encoding geometric information without constraining the network's outputs to be equivariant or invariant, in contrast to architectures that enforce such symmetries by construction.
-This reflects a broader trend in geometric deep learning: moving from hard-coded architectural symmetries toward soft, representation-based geometric priors --- as seen in vision (ViT~\citep{dosovitskiy2021image} replacing CNNs), graph learning (TokenGT~\citep{kim2022tokengt} replacing message passing), and protein structure prediction (AlphaFold3~\citep{abramson2024alphafold3} replacing equivariant modules with diffusion).
+Geometry enters only through an additive pair bias $B$ derived from pairwise distances and sequence separation --- a \emph{soft invariant prior} that encodes geometric information without constraining the network's outputs to be equivariant.
+This reflects a broader trend away from hard-coded architectural symmetries toward soft geometric priors, as seen in ViT~\citep{dosovitskiy2021image}, TokenGT~\citep{kim2022tokengt}, and AlphaFold3~\citep{abramson2024alphafold3}.
 
-This raises a natural question: \textbf{in a model where geometry enters only as an additive bias to attention logits, how much work does this bias actually do --- and when?}
-During inference, Proteina integrates a velocity field from pure noise ($t{=}0$) to a structured protein backbone ($t{=}1$) via ${\sim}100$ Euler steps.
+This raises a natural question: \textbf{how much work does the geometric bias actually do --- and when?}
+During generation, Proteina samples via SDE integration from pure noise ($t{=}0$) to a structured backbone ($t{=}1$).
 At each step, every attention layer computes:
 \begin{equation}
     A = \mathrm{softmax}(C + B)
     \label{eq:attention}
 \end{equation}
-where $C = QK^\top / \sqrt{d}$ is the content score derived from sequence representations, and $B$ is the pair bias projected from distance and sequence-separation features.
-The additive decomposition in Equation~\ref{eq:attention} invites a systematic study of how each component shapes attention --- and ultimately structure --- across the generation trajectory.
-
-However, decomposing contributions through a nonlinear function (softmax) has no single correct solution.
-We therefore ask three complementary questions:
+where $C = QK^\top / \sqrt{d}$ is the content score and $B$ is the pair bias.
+Since softmax is nonlinear, there is no single correct way to attribute the output to $B$ vs.\ $C$.
+We therefore ask four complementary questions:
 \begin{enumerate}
-    \item \textbf{Descriptive:} How much pre-softmax signal does each component carry, and how does this balance evolve during generation?
+    \item \textbf{Descriptive:} How large is $B$ relative to $C$ in the pre-softmax scores, and how does this evolve?
     \item \textbf{Functional:} Which component produces more structurally useful attention patterns?
-    \item \textbf{Causal:} When and where is the geometric bias necessary for generating valid structures?
+    \item \textbf{Causal:} When and where is $B$ necessary for generating valid structures?
+    \item \textbf{Representational:} Where in the network does 3D structure emerge?
 \end{enumerate}
-Each question motivates a distinct analytical lens --- pre-softmax signal decomposition, post-softmax contact prediction, and causal ablation --- which together provide a triangulated view of the geometric bias's role.
-We apply all three lenses to four model variants spanning 60M to 400M parameters to test whether findings generalise across scale and architecture.
-Section~\ref{sec:methods} describes the models and metrics; Section~\ref{sec:results} presents results; Section~\ref{sec:discussion} discusses implications for geometric deep learning.
+We apply all four lenses to four model variants spanning 60M to 400M parameters (Table~\ref{tab:models}).
+Our main findings are:
+\begin{itemize}
+    \item $B$-only attention predicts contacts 5--20$\times$ above the random baseline at all scales, while $C$-only is only 2--3$\times$ above random (Section~\ref{sec:functional}).
+    \item $B$ is dispensable during early generation ($t < 0.5$) but essential during late refinement --- and this temporal asymmetry replicates identically across all four models despite $>$100$\times$ differences in descriptive signal (Section~\ref{sec:causal}).
+    \item Triangle multiplicative updates do not change \emph{when} $B$ matters but invert \emph{where}: they shift $B$'s critical contribution from early to deep layers (Section~\ref{sec:causal}).
+    \item Every model has a ``geometric interpreter'' layer where $R_c \gg 1$, but which layer this is depends on architecture, not scale (Section~\ref{sec:descriptive}).
+\end{itemize}
 
 % ============================================================
 \section{Methods}
@@ -66,22 +69,22 @@ Section~\ref{sec:methods} describes the models and metrics; Section~\ref{sec:res
 
 \subsection{Models and Generation}
 
-We analyse four Proteina model variants (Table~\ref{tab:models}) to test scale and architecture dependence.
-The first two share the same architecture at different scales; the third and fourth add triangle multiplicative updates that iteratively refine the pair representation.
-All models include 10 register tokens and use pair bias attention (Equation~\ref{eq:attention}).
-Proteins of length $n{=}100$ are generated unconditionally via SDE sampling.
-Attention logit matrices $C$ and $B$ are captured every 5th timestep, yielding 20 temporal snapshots per generation.
-All experiments use 5 random seeds; error bars report $\pm 1$ standard deviation.
+We analyse four Proteina variants (Table~\ref{tab:models}).
+The no-tri models use only pair bias attention; the tri models additionally use triangle multiplicative updates that iteratively refine the pair representation.
+All models include 10 register tokens~\citep{darcet2024registers}.
+Proteins of length $n{=}100$ are generated unconditionally via 100-step SDE sampling (Euler-Maruyama with $dt{=}0.01$, noise scale 0.45).
+The pre-softmax components $C$ and $B$ are captured every 5th step, yielding 20 temporal snapshots.
+Descriptive and functional experiments use 5 seeds; causal ablations use 3 seeds.
 
 \begin{table}[h]
     \centering
-    \caption{Model variants analysed. Triangle updates iteratively refine the pair representation in deep layers.}
+    \caption{Model variants analysed.}
     \label{tab:models}
     \begin{tabular}{lcccccc}
         \toprule
         Model & Version & Layers & Heads & $d_\text{token}$ & $d_\text{pair}$ & Triangle \\
         \midrule
-        60M & v1.3 & 12 & 12 & 512 & 256 & No \\
+        60M no-tri & v1.3 & 12 & 12 & 512 & 256 & No \\
         200M no-tri & v1.2 & 15 & 12 & 768 & 256 & No \\
         200M tri & v1.1 & 15 & 12 & 768 & 512 & Yes \\
         400M tri & v1.4 & 18 & 16 & 1024 & 512 & Yes \\
@@ -91,156 +94,156 @@ All experiments use 5 random seeds; error bars report $\pm 1$ standard deviation
 
 \subsection{Metrics}
 
-Table~\ref{tab:metrics} summarises all metrics used in this study.
-We group them by analytical lens: \emph{descriptive} metrics characterise the pre-softmax signal, \emph{functional} metrics evaluate post-softmax utility, and \emph{causal} metrics assess structural quality under intervention.
+Table~\ref{tab:metrics} defines all metrics with their null baselines.
 
 \begin{table}[h]
     \centering
-    \caption{Summary of metrics. ``Baseline'' indicates the expected value under a null model (random attention, no ablation, or uniform distribution).}
+    \caption{Summary of metrics. ``Baseline'' is the expected value under a null model.}
     \label{tab:metrics}
-    \begin{tabular}{p{2.8cm}p{5.5cm}p{2.2cm}p{2.5cm}}
+    \begin{tabular}{p{2.8cm}p{5.5cm}p{2.0cm}p{2.5cm}}
         \toprule
         Metric & Definition & Range & Baseline \\
         \midrule
-        \multicolumn{4}{l}{\emph{Lens 1: Descriptive (pre-softmax)}} \\[2pt]
-        $R_c$ (row-centred logit dominance) & $\|\tilde{B}\|_F / \|\tilde{C}\|_F$ where $\tilde{X}$ subtracts each row's mean from $X$ & $[0, \infty)$ & $R_c = 1$ (balanced) \\[4pt]
-        $\hat{H}$ (normalised entropy) & $-\sum_j a_{ij} \log a_{ij}\, /\, \log n$, the Shannon entropy of each attention row normalised by the maximum & $[0, 1]$ & $\hat{H} = 1$ (uniform) \\[4pt]
-        $\rho$ (spatial alignment) & Pearson correlation between attention weights and inverse pairwise C$\alpha$ distances & $[-1, 1]$ & $\rho = 0$ (no correlation) \\[4pt]
+        \multicolumn{4}{l}{\emph{Descriptive}} \\[2pt]
+        $R_c$ (row-centred logit dominance) & $\|\tilde{B}\|_F / \|\tilde{C}\|_F$ where $\tilde{X}$ subtracts each row's mean. Accounts for softmax invariance to row-constant shifts. & $[0, \infty)$ & $R_c = 1$ (balanced) \\[4pt]
         \midrule
-        \multicolumn{4}{l}{\emph{Lens 2: Functional (post-softmax)}} \\[2pt]
-        Precision@$L/5$ & Fraction of the top-$k$ attention-ranked residue pairs ($k = n/5$) that are true contacts. Pairs with $|i{-}j| < 6$ are excluded (local backbone contacts are trivially close). Symmetrised and APC-corrected following~\citet{rao2020transformer}. & $[0, 1]$ & Contact density ($\sim$1--3\%) \\[4pt]
+        \multicolumn{4}{l}{\emph{Functional}} \\[2pt]
+        Precision@$L/5$ & Fraction of the top-$k$ attention-ranked residue pairs ($k = n/5$) that are true contacts (C$\alpha$ $< 8$\,\AA, $|i{-}j| \geq 6$). Symmetrised and APC-corrected following~\citet{rao2020transformer}. Short-range pairs excluded (trivially close along backbone). & $[0, 1]$ & Contact density ($\sim$1--3\%) \\[4pt]
         \midrule
-        \multicolumn{4}{l}{\emph{Lens 3: Causal (ablation)}} \\[2pt]
-        $R_g$ (radius of gyration) & $\sqrt{\frac{1}{n}\sum_i \|\mathbf{r}_i - \bar{\mathbf{r}}\|^2}$, measuring compactness of the generated structure & $(0, \infty)$ nm & $\sim$1.3--1.4\,nm (no ablation) \\[4pt]
-        Steric clashes & Count of C$\alpha$ pairs with distance $< 2$\,\AA\ and $|i{-}j| \geq 3$ & $[0, \infty)$ & 0 (no ablation) \\[4pt]
+        \multicolumn{4}{l}{\emph{Causal}} \\[2pt]
+        $R_g$ (radius of gyration) & $\sqrt{\frac{1}{n}\sum_i \|\mathbf{r}_i - \bar{\mathbf{r}}\|^2}$ & $(0, \infty)$ nm & $\sim$1.3--1.4\,nm \\[4pt]
+        Steric clashes & C$\alpha$ pairs with distance $< 2$\,\AA, $|i{-}j| \geq 3$ & $[0, \infty)$ & 0 \\[4pt]
         \midrule
-        \multicolumn{4}{l}{\emph{Structure lens}} \\[2pt]
-        RMSD to final & Kabsch-aligned RMSD between intermediate-layer decoded coordinates and the final-layer prediction & $[0, \infty)$ nm & 0 at final layer \\[4pt]
-        Contact similarity & Jaccard index between contact maps of intermediate and final layer predictions ($< 8$\,\AA, $|i{-}j| \geq 6$) & $[0, 1]$ & 1 at final layer \\
+        \multicolumn{4}{l}{\emph{Representational (structure lens)}} \\[2pt]
+        RMSD to final & Kabsch-aligned RMSD of intermediate-layer decoded coordinates to the final-layer prediction & $[0, \infty)$ nm & 0 at final layer \\[4pt]
+        Contact similarity & Jaccard index of contact maps between intermediate and final layer predictions & $[0, 1]$ & 1 at final layer \\
         \bottomrule
     \end{tabular}
 \end{table}
 
-\subsection{Three Analytical Lenses}
+\subsection{Four Analytical Lenses}
 
-\paragraph{Lens 1: Pre-softmax signal decomposition.}
-We measure the relative magnitude of $B$ and $C$ in the pre-softmax logits.
-The raw ratio $R = \|B\|_F / \|C\|_F$ is intuitive but not softmax-aware: since $\mathrm{softmax}(\mathbf{x} + c) = \mathrm{softmax}(\mathbf{x})$, row-constant components of $B$ or $C$ inflate the Frobenius norm without affecting the attention distribution.
-We therefore use the \emph{row-centred} variant $R_c$ (Table~\ref{tab:metrics}) as our primary metric, and present $R$ vs.\ $R_c$ comparisons to justify this choice.
-We additionally track normalised entropy $\hat{H}$ (how focused each attention head is) and spatial alignment $\rho$ (how well attention correlates with 3D proximity), both computed on the post-softmax attention matrix.
+\paragraph{Lens 1: Descriptive.}
+We measure $R_c = \|\tilde{B}\|_F / \|\tilde{C}\|_F$, the row-centred Frobenius norm ratio (Table~\ref{tab:metrics}).
+Row-centering removes the softmax-invariant component: since $\mathrm{softmax}(\mathbf{x} + c) = \mathrm{softmax}(\mathbf{x})$, row-constant energy inflates the raw ratio $R$ without affecting attention.
+Figure~\ref{fig:rawvscentered} justifies this choice.
+We also decompose $R_c$ by sequence separation ($|i{-}j|$) to test whether $B$'s role differs for local vs.\ long-range interactions.
 
-\paragraph{Lens 2: Post-softmax functional evaluation.}
-Following~\citet{rao2020transformer}, who showed that protein language model attention heads predict structural contacts, we evaluate Contact Precision@$L/5$ for three attention variants: $\mathrm{softmax}(C + B)$ (full), $\mathrm{softmax}(B)$ (bias-only), and $\mathrm{softmax}(C)$ (content-only).
-For each attention head, we symmetrise the attention matrix, apply Average Product Correction (APC) to remove marginal background signal, rank all residue pairs with sequence separation $|i{-}j| \geq 6$, and compute the fraction of the top $k = n/5$ pairs that are true contacts (C$\alpha$ distance $< 8$\,\AA).
-Short-range pairs ($|i{-}j| < 6$) are excluded because neighbouring residues along the backbone are always spatially close regardless of fold.
-Ground truth contacts are defined retrospectively from the model's own final generated structure.
-The random baseline (dashed line in figures) is the contact density among eligible pairs, i.e., the expected precision if attention rankings were uninformative.
+\paragraph{Lens 2: Functional.}
+Following~\citet{rao2020transformer}, we evaluate Contact Precision@$L/5$ for $\mathrm{softmax}(C + B)$, $\mathrm{softmax}(B)$, and $\mathrm{softmax}(C)$.
+Ground truth contacts are defined retrospectively from each model's own generated structure.
+The random baseline (dashed line in figures) is the contact density among eligible pairs.
 
-\paragraph{Lens 3: Causal ablation.}
-We zero out the pair bias $B$ under six conditions: (i)~\emph{full ablation} ($B{=}0$ at all timesteps), (ii)~\emph{early-only B} ($B$ active for $t \leq 0.5$, then zeroed), (iii)~\emph{late-only B} ($B{=}0$ for $t \leq 0.5$, then active), (iv)~\emph{layer-0 ablation} ($B{=}0$ in the first layer only), (v)~\emph{deep ablation} ($B{=}0$ in the second half of layers: 6--11 for 60M, 8--14 for 200M, 10--17 for 400M), and (vi)~\emph{baseline} (unmodified).
-Structural quality is assessed via radius of gyration ($R_g$) and steric clash count (Table~\ref{tab:metrics}), using 3 seeds per condition.
+\paragraph{Lens 3: Causal.}
+We zero out $B$ under six conditions: full ablation, early-only $B$ ($t \leq 0.5$), late-only $B$ ($t > 0.5$), Layer-0 ablation, deep-layer ablation (second half of layers), and baseline.
+We additionally ablate each model's peak-$R_c$ layer individually to test whether descriptive dominance implies causal importance.
 
-\paragraph{Structure lens.}
-Inspired by the logit lens~\citep{nostalgebraist2020logitlens} from NLP interpretability, we apply the model's coordinate decoder to intermediate layer representations at each timestep.
-This produces a per-layer 3D structure prediction, which we compare to the final-layer output via Kabsch-aligned RMSD and contact map similarity (Jaccard index).
-We also decompose the logit dominance ratio by sequence separation to test whether $B$'s role differs for local vs.\ long-range interactions.
+\paragraph{Lens 4: Representational (structure lens).}
+Inspired by the logit lens~\citep{nostalgebraist2020logitlens}, we apply the coordinate decoder to intermediate layer representations, producing a per-layer 3D prediction that we compare to the final output via RMSD and contact similarity.
 
 % ============================================================
 \section{Results}
 \label{sec:results}
 
-\subsection{Descriptive: The Geometry--Content Balance}
+\subsection{Descriptive: Every Model Has a Geometric Interpreter}
+\label{sec:descriptive}
 
-Figure~\ref{fig:trajectory} shows the row-centred logit dominance $R_c$, normalised entropy, and spatial alignment across all four models.
+Figures~\ref{fig:rc_lines} and~\ref{fig:rc_heatmaps} show $R_c$ across the generation trajectory.
 
-\textbf{The geometry--content balance is scale-dependent.}
-Under $R_c$, the 60M model's Layer~0 rises from $R_c \approx 7.5$ at $t{=}0$ to $R_c \approx 35$ by $t{=}1$ --- the content score $C$ develops large row-constant components that softmax discards, making $B$'s functional dominance far greater than raw $R$ suggests.
-By contrast, the 200M no-tri model starts at $R_c \approx 1.3$ and rises modestly to $\sim$4.3; the 400M tri model starts at $R_c \approx 1.5$ and reaches only $\sim$3.3.
-The 200M tri model shows a unique pattern: $R_c$ \emph{decreases} from 1.3 to 0.5 during generation.
+\textbf{Every model concentrates geometry dominance in one or a few layers} (Figure~\ref{fig:rc_heatmaps}).
+In the 60M no-tri model, Layer~0 dominates ($R_c \approx 35$ at $t{=}1$); in the 200M no-tri model, Layers~0 and 2 are elevated but weaker ($R_c \approx 4$); in the 400M tri model, Layer~2 dominates ($R_c \approx 29$).
+The 200M tri model distributes geometry across many layers (L4, L7, L9, L13), with L9 peaking at $R_c \approx 27$.
+The remaining layers in all models stay near $R_c \approx 1$ (balanced).
 
-Deeper layers in all models maintain $R_c \approx 0.3$--$1.0$ throughout, indicating that geometry--content balance in deep layers is more consistent across scale than in Layer~0.
-
-\textbf{Entropy sharpens in a wave from early to late layers.}
-In the 60M model, all layers start near-uniform ($\hat{H} \approx 0.85$).
-Layer~0 sharpens first, with normalised entropy dropping sharply; deeper layers follow progressively later --- a wave-like propagation consistent with bottom-up structure formation.
-The 200M model shows a similar sharpening wave, though with higher absolute entropy values and a less pronounced early-layer lead.
+\textbf{Which layer is the geometric interpreter depends on architecture, not just scale.}
+Both no-tri models concentrate in early layers (L0--L2); both tri models shift the peak to deeper layers, consistent with triangle updates amplifying $B$'s role where they operate.
+The 200M tri model is distinctive in distributing geometry across many layers rather than concentrating it.
 
 \textbf{Why $R_c$ rather than $R$?}
-Figure~\ref{fig:rawvscentered} compares $R$ and $R_c$ for the 60M model.
-In Layer~0, $R_c$ diverges dramatically from $R$ at late timesteps ($R_c \approx 35$ vs.\ $R \approx 5.7$ at $t{=}1$): the content score develops softmax-invariant row-constant energy that inflates its Frobenius norm without affecting the attention distribution.
-In deeper layers, the centering correction is smaller but model-dependent.
-We use $R_c$ as the primary metric throughout.
+Figure~\ref{fig:rawvscentered} compares raw $R$ and row-centred $R_c$ for the 60M model.
+At $t{=}1$, $R \approx 5.7$ but $R_c \approx 35$: the content score develops large row-constant components that inflate its Frobenius norm without affecting attention.
+Under the more principled $R_c$, geometry dominance in Layer~0 is $6\times$ greater than the raw metric suggests.
 
 \textbf{Sequence separation modulates the balance.}
-Figure~\ref{fig:seqsep} decomposes $R_c$ by residue separation in Layer~0 across all four models.
-The 60M model shows the strongest separation dependence: at $t{=}0$, long-range pairs are highest, but the ordering reverses during generation as local contacts gain dominance.
-Larger models show progressively weaker separation dependence, with the 200M no-tri model being nearly flat across categories.
-This suggests that smaller models rely on $B$ for sequence-separation-specific roles, while larger models distribute this computation more evenly between $B$ and $C$.
+Figure~\ref{fig:seqsep} decomposes $R_c$ by residue separation in the peak layer.
+The 60M model shows the strongest separation dependence; the 200M no-tri and 400M tri models show the same qualitative pattern (long-range $>$ local early, reversing late) but weaker.
+The 200M tri model again stands out as the exception, with a distinctive non-monotonic trajectory.
 
 \begin{figure}[t]
     \centering
-    \includegraphics[width=\textwidth]{figures/fig1-trajectory-all-models.png}
-    \caption{Core metrics across the denoising trajectory for all four models ($n{=}100$, 5 seeds, shaded $= \pm 1$ std). Each row is one model. \textbf{Left:} Row-centred logit dominance $R_c$. The 60M model's Layer~0 reaches $R_c \approx 35$ at $t{=}1$; larger models show much weaker geometry dominance. \textbf{Centre:} Normalised entropy $\hat{H}$ sharpens from early to late layers. \textbf{Right:} Spatial alignment $\rho$ grows monotonically.}
-    \label{fig:trajectory}
+    \includegraphics[width=\textwidth]{figures/fig1a-Rc-lines.png}
+    \caption{Row-centred logit dominance $R_c$ for key layers in each model ($n{=}100$, 5 seeds). Layers selected per model: peak $R_c$ layer (marked with $*$) plus first/last for contrast. Dashed line: $R_c = 1$ (balanced).}
+    \label{fig:rc_lines}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig1b-Rc-heatmaps.png}
+    \caption{$R_c$ across all layers and timesteps (mean over heads). Each model concentrates geometry dominance in different layers: L0 in 60M, L0/L2 in 200M no-tri, distributed in 200M tri, L2 in 400M tri.}
+    \label{fig:rc_heatmaps}
 \end{figure}
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/fig6-raw-vs-centered.png}
-    \caption{Raw $R$ (blue) vs.\ row-centred $R_c$ (red) for the 60M model. In Layer~0, $R_c$ diverges from $R$ at late timesteps ($R_c \approx 35$ vs.\ $R \approx 5.7$ at $t{=}1$), revealing that $C$ develops softmax-invariant row-constant energy.}
+    \caption{Raw $R$ (blue) vs.\ row-centred $R_c$ (red) for the 60M model. In Layer~0, $R_c$ diverges from $R$ at late timesteps, revealing that $C$ develops softmax-invariant row-constant energy.}
     \label{fig:rawvscentered}
 \end{figure}
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/fig2-seqsep-all-models.png}
-    \caption{Row-centred logit dominance $R_c$ by sequence separation in Layer~0 for all four models (5 seeds). The 60M model shows the strongest separation dependence; larger models are progressively more uniform.}
+    \caption{$R_c$ by sequence separation in the peak layer for all four models (5 seeds).}
     \label{fig:seqsep}
 \end{figure}
 
-\subsection{Functional: Contact Prediction}
+\subsection{Functional: $B$ Predicts Contacts Far Better Than $C$}
+\label{sec:functional}
 
-Figure~\ref{fig:contact} evaluates the functional utility of each attention component across all four models.
-Bias-only attention ($\mathrm{softmax}(B)$) consistently outperforms content-only ($\mathrm{softmax}(C)$) at all scales: at $t{=}1$, the gap is $5\times$ for the 60M and 200M models ($\sim$0.26 vs.\ $\sim$0.05).
-The 400M tri model achieves notably higher precision overall (B-only $= 0.46$, C-only $= 0.10$), but the ratio remains similar.
+Figure~\ref{fig:contact} evaluates contact prediction across all four models.
+At $t{=}1$, bias-only precision is 5--20$\times$ above the random baseline at all scales: $0.26$ for the 60M and 200M models, $0.46$ for the 400M tri model (random $\approx$ 0.01--0.03).
+Content-only precision is 2--3$\times$ above random ($\sim$0.05--0.10) --- above chance but far weaker than $B$.
 
-\textbf{This $B$-over-$C$ gap replicates across all four models} despite dramatically different $R_c$ profiles.
-The 200M no-tri model has $R_c \approx 1.3$ in Layer~0 (near-balanced), yet $B$-only contact prediction is just as superior as in the 60M model where $R_c \approx 7.5$.
-This dissociation between descriptive signal magnitude and functional utility is the central motivation for multi-lens analysis.
+This functional gap is \textbf{scale-invariant}: the 200M no-tri model has $R_c \approx 1.3$ in Layer~0 (near-balanced) yet $B$-only contact prediction is just as superior as in the 60M model where $R_c \approx 7.5$.
+Descriptive signal magnitude does not predict functional utility.
 
-Full attention slightly underperforms bias-only in most models, suggesting that $C$ occasionally opposes $B$, encoding complementary non-contact relationships.
+Full attention slightly underperforms bias-only, suggesting $C$ occasionally opposes $B$ by encoding complementary non-contact relationships.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/fig3-contact-precision-all-models.png}
-    \caption{Contact Precision@$L/5$ across the trajectory for all four models ($n{=}100$, 5 seeds). Each row is one model; columns show full, $B$-only, and $C$-only attention. $B$-only outperforms $C$-only at all scales, despite vastly different descriptive profiles.}
+    \caption{Contact Precision@$L/5$ ($n{=}100$, 5 seeds). Dashed line: random baseline (contact density). $B$-only is 5--20$\times$ above random at all scales.}
     \label{fig:contact}
 \end{figure}
 
-\subsection{Causal: Bias Ablation}
+\subsection{Causal: $B$ Matters Only at the End}
+\label{sec:causal}
 
-Table~\ref{tab:ablation} presents structural quality under six ablation conditions for all four models.
-Full removal of $B$ is catastrophic in every case: structures collapse with thousands of steric clashes.
+Table~\ref{tab:ablation} shows structural quality under ablation.
+Full removal of $B$ is catastrophic in every model (thousands of clashes).
 
-The critical finding is the \textbf{temporal asymmetry}, which \textbf{replicates across all four models}.
-\emph{Early-only B} (active for $t \leq 0.5$, then removed) produces results indistinguishable from full ablation.
-\emph{Late-only B} (absent for $t \leq 0.5$, then activated) nearly preserves structural quality.
-The descriptive lens shows vastly different $R_c$ profiles across these models, yet the causal pattern is identical: $B$ is dispensable early and essential late.
+The central causal finding is a \textbf{sharp temporal asymmetry that replicates across all four models}: giving $B$ only during early generation ($t \leq 0.5$) then removing it is indistinguishable from never having $B$ at all.
+Conversely, withholding $B$ during early generation then activating it ($t > 0.5$) nearly preserves structural quality.
+This implies a single temporal boundary around $t \approx 0.5$: $B$ is dispensable before it and essential after.
 
-\textbf{Triangle updates reshape the layer-specific ablation profile.}
-Layer-specific ablations reveal a qualitative difference introduced by triangle multiplicative updates (Table~\ref{tab:ablation}).
-In models without triangle updates, Layer-0 ablation is the most damaging single-layer intervention ($R_g = 0.81$\,nm for 60M, $0.91$ for 200M no-tri), while deep-layer ablation causes intermediate damage.
-Both triangle models invert this pattern: Layer-0 ablation is nearly harmless ($R_g \geq 1.1$\,nm), while deep-layer ablation is catastrophic ($R_g \leq 0.12$\,nm, thousands of clashes).
-The 400M tri model replicates the 200M tri pattern exactly, confirming that this is a consequence of triangle updates rather than model scale.
-Triangle updates create a deep-layer information bottleneck through the pair representation, making $B$'s contribution there indispensable while simultaneously making earlier layers robust to missing geometric signal.
+\textbf{Triangle updates invert the layer-specific profile without changing the temporal pattern.}
+In no-tri models, Layer-0 ablation is the most damaging single-layer intervention ($R_g = 0.81$\,nm for 60M).
+In tri models, Layer-0 ablation is nearly harmless ($R_g \geq 1.1$\,nm) while deep-layer ablation is catastrophic ($R_g \leq 0.12$\,nm, thousands of clashes).
+The 400M tri replicates the 200M tri pattern, confirming this is driven by triangle updates, not scale.
+
+\textbf{Descriptive dominance does not imply causal necessity for individual layers.}
+Ablating each model's peak-$R_c$ layer (Table~\ref{tab:peak_ablation}) produces only moderate damage in all cases: $R_g$ drops by 5--18\% but structures remain valid (0--2 clashes).
+Even Layer~2 in the 400M tri model, which has $R_c = 29.4$ (comparable to Layer~0 in the 60M model), is individually dispensable.
+By contrast, ablating the \emph{collective} deep layers is catastrophic in tri models.
+The geometric bias is distributed enough that no single high-$R_c$ layer is essential on its own --- it is the aggregate contribution across layers that matters.
 
 \begin{table}[t]
     \centering
-    \caption{Structural quality under bias ablation ($n{=}100$, 3 seeds per model). The temporal asymmetry (early-only $\equiv$ full ablation; late-only $\approx$ baseline) replicates across all four architectures. Triangle updates alter the layer-specific profile: Layer-0 ablation becomes harmless while deep ablation becomes catastrophic.}
+    \caption{Structural quality under bias ablation ($n{=}100$, 3 seeds). Temporal asymmetry replicates across all four models. Bold: triangle update effect on layer-specific profile.}
     \label{tab:ablation}
     \begin{tabular}{lcccccccc}
         \toprule
-        & \multicolumn{2}{c}{\textbf{60M}} & \multicolumn{2}{c}{\textbf{200M no-tri}} & \multicolumn{2}{c}{\textbf{200M tri}} & \multicolumn{2}{c}{\textbf{400M tri}} \\
+        & \multicolumn{2}{c}{\textbf{60M no-tri}} & \multicolumn{2}{c}{\textbf{200M no-tri}} & \multicolumn{2}{c}{\textbf{200M tri}} & \multicolumn{2}{c}{\textbf{400M tri}} \\
         \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
         Condition & $R_g$ & Clash & $R_g$ & Clash & $R_g$ & Clash & $R_g$ & Clash \\
         \midrule
@@ -254,17 +257,34 @@ Triangle updates create a deep-layer information bottleneck through the pair rep
     \end{tabular}
 \end{table}
 
-\subsection{Structure Lens}
+\begin{table}[t]
+    \centering
+    \caption{Ablating each model's peak-$R_c$ layer (3 seeds). No single geometric interpreter layer is catastrophically important on its own, despite high $R_c$.}
+    \label{tab:peak_ablation}
+    \begin{tabular}{lccccc}
+        \toprule
+        Model & Peak layer & Peak $R_c$ ($t{=}1$) & $R_g$ (ablated) & $R_g$ (baseline) & Clashes \\
+        \midrule
+        60M no-tri & L0 & 34.9 & 0.81 & 1.44 & 1 \\
+        200M no-tri & L2 & 3.9 & 1.28 & 1.36 & 1 \\
+        200M tri & L9 & 27.0 & 1.17 & 1.42 & 1 \\
+        400M tri & L2 & 29.4 & 1.13 & 1.27 & 1 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
-Figure~\ref{fig:structurelens} applies each model's coordinate decoder to intermediate layer representations, revealing where 3D structure emerges in the forward pass.
-Across all models, middle layers produce representations that are \emph{furthest} from the final output (highest RMSD), while early-layer representations are closer.
-Contact similarity (Jaccard) to the final structure is near zero until the last 1--2 layers in all models, concentrating structural specificity at the network's output.
-The models without triangle updates (60M, 200M no-tri) show a sharper gradient between middle and final layers; the triangle models show a more gradual transition, consistent with the pair representation providing an additional channel for structural information.
+\subsection{Representational: Structure Emerges Only at the Output}
+
+Figure~\ref{fig:structurelens} applies each model's coordinate decoder to intermediate layer representations.
+Middle layers produce representations \emph{furthest} from the final output (highest RMSD), while early-layer representations are closer --- the network warps representations through an internal space not aligned with coordinate space.
+Contact similarity to the final structure is near zero until the last 1--2 layers, concentrating structural specificity at the output.
+The radius of gyration panel shows that intermediate layers decode to structures with varying compactness, with early layers at early timesteps producing unexpectedly compact structures.
+Triangle models show a more gradual RMSD gradient, consistent with the pair representation providing an additional channel for structural information.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=\textwidth]{figures/fig5-structure-lens-all-models.png}
-    \caption{Structure lens analysis for all four models (3 seeds, mean). Each row is one model. \textbf{Left:} RMSD to final-layer prediction. Middle layers show highest RMSD across all models. \textbf{Centre:} Radius of gyration. \textbf{Right:} Contact similarity (Jaccard) to final structure --- near zero until the last layers.}
+    \caption{Structure lens (3 seeds, mean). \textbf{Left:} RMSD to final-layer prediction --- middle layers are furthest. \textbf{Centre:} Radius of gyration of decoded structures. \textbf{Right:} Contact similarity (Jaccard) --- near zero until the last layers.}
     \label{fig:structurelens}
 \end{figure}
 
@@ -272,41 +292,37 @@ The models without triangle updates (60M, 200M no-tri) show a sharper gradient b
 \section{Discussion}
 \label{sec:discussion}
 
-Our multi-scale, multi-lens analysis reveals that the geometric bias plays a causally essential but descriptively variable role across model scales.
+\textbf{The geometric bias is essential late in generation, regardless of scale or architecture.}
+The temporal ablation pattern --- early-only $B \equiv$ full ablation; late-only $B \approx$ baseline --- replicates identically across all four models despite $>$100$\times$ differences in the descriptive metric $R_c$.
+This is our strongest finding: descriptive signal magnitude is decoupled from causal necessity.
+The content score $C$ does not learn to replicate $B$'s structural signal at any scale --- $C$-only attention remains poor at contact prediction even in models where $C$'s norm exceeds $B$'s.
 
-\textbf{Causal invariance despite descriptive divergence.}
-The most striking finding is the complete replication of the temporal ablation pattern across all four architecturally distinct models.
-The descriptive geometry--content balance varies substantially across scales, yet all four exhibit the identical temporal asymmetry: $B$ is dispensable during bootstrapping and essential during refinement, with early-only ablation indistinguishable from full ablation.
-This dissociation is important methodologically: the descriptive metric alone would have suggested fundamentally different roles for $B$ across scales, while the causal evidence reveals the same underlying dependence.
+\textbf{Triangle updates determine where $B$ is critical, not when.}
+Without triangle updates, Layer-0 ablation is most damaging and deep ablation is moderate.
+With triangle updates, this inverts: Layer-0 ablation is harmless while deep ablation is catastrophic.
+Triangle updates create a deep-layer information bottleneck through the pair representation, concentrating $B$'s causal contribution in those layers.
+The temporal pattern is unaffected.
 
-\textbf{Triangle updates reshape where --- but not when --- B matters.}
-The 200M tri model introduces a second geometric inductive bias: triangle multiplicative updates that iteratively refine the pair representation in deep layers.
-This does not change the \emph{temporal} ablation pattern (early-only $\equiv$ full; late-only $\approx$ baseline), but it dramatically alters the \emph{spatial} (layer-specific) profile.
-Without triangle updates, Layer-0 ablation is most damaging; with triangle updates, Layer-0 ablation is nearly harmless while deep-layer ablation is catastrophic.
-This suggests that triangle updates create a deep-layer information bottleneck through the pair representation, making $B$'s contribution in those layers indispensable --- while simultaneously making earlier layers more robust to missing geometric signal.
+\textbf{No single layer is indispensable.}
+Despite concentrating geometric signal ($R_c \gg 1$), the peak-$R_c$ layer can be individually ablated with only moderate damage (Table~\ref{tab:peak_ablation}).
+Catastrophic failure requires ablating \emph{many} layers collectively.
+The geometric bias functions as a distributed system: each layer's contribution is replaceable, but the aggregate is essential.
 
-\textbf{A three-phase process.}
-All models exhibit a structured generation trajectory: (1)~\emph{bootstrapping} ($t \approx 0$--$0.3$), where attention is diffuse and $B$ is not yet causally essential; (2)~\emph{progressive refinement} ($t \approx 0.3$--$0.8$), where entropy sharpens in a wave from early to late layers; and (3)~\emph{contact commitment} ($t \approx 0.8$--$1.0$), where attention focuses and $B$ becomes indispensable.
+\textbf{Implications for architecture design.}
+Soft geometric priors (additive biases) are effective alternatives to hard constraints (equivariant layers), provided they are present during late refinement.
+Conclusions about geometric bias importance drawn from magnitude-based metrics alone may not generalise across model scales --- multi-lens analysis is necessary.
 
-\textbf{Implications for geometric deep learning.}
-Our findings provide evidence that geometric inductive biases are not redundant at inference, even in models where their descriptive footprint is small.
-The content score $C$ does not learn to replicate $B$'s discriminative signal at either scale --- in the 60M model, $C$'s energy concentrates in softmax-invariant row-constant components; in the 200M model, despite higher $C$ magnitude, $C$-only attention remains equally poor at contact prediction.
-For architecture design, this argues that soft geometric priors (additive biases) can be effective alternatives to hard constraints (equivariant layers), provided they are present throughout the generative process --- particularly during refinement.
-The scale dependence of the descriptive balance also suggests that conclusions about geometric bias importance drawn from magnitude-based metrics alone may not generalise across model scales.
-
-\textbf{Limitations.}
-Spatial alignment is computed against retrospective ground truth (the model's own output), which may overestimate alignment for poorly generated structures.
-The Frobenius norm ratio, even after row-centering, does not capture the cross-term interaction $\langle \tilde{B}, \tilde{C} \rangle$ between the two components; a full variance decomposition would further clarify whether $B$ and $C$ reinforce or oppose each other.
-Extending this analysis to conditional generation would test whether the causal invariance holds when ground-truth structure is available.
+\textbf{Limitations and future work.}
+All analyses use unconditional generation with retrospective ground truth; extending to conditional generation would test whether these findings hold when external structural ground truth is available.
+The Frobenius norm ratio does not capture the cross-term interaction $\langle \tilde{B}, \tilde{C} \rangle$; a full variance decomposition could clarify whether $B$ and $C$ reinforce or oppose each other.
 
 % ============================================================
 \section{Conclusion}
 
-We have characterised how Proteina's geometric pair bias and learned content score interact during flow-based protein structure generation, using three complementary analytical lenses across four model variants spanning 60M to 400M parameters.
-The descriptive analysis reveals a scale-dependent geometry--content balance, while the functional analysis shows $B$-only contact prediction consistently outperforms $C$-only across all scales.
-Causal ablation reveals the same temporal asymmetry --- $B$ dispensable early, essential late --- replicating across all four architectures.
-Triangle multiplicative updates do not change \emph{when} $B$ matters but alter \emph{where}: they shift $B$'s critical contribution from early to deep layers, creating a pair-representation bottleneck.
-More broadly, our results show that soft geometric priors play functionally irreplaceable roles in flow-based generation, even in models where their descriptive footprint is small, and that multi-lens interpretability is essential for understanding these roles in nonlinear systems.
+The geometric pair bias in Proteina is dispensable during early generation but essential during late structural refinement --- a causal finding that replicates across four model scales despite $>$100$\times$ variation in the descriptive geometry--content balance.
+Triangle updates do not change when $B$ matters but invert where, shifting the critical contribution from early to deep layers.
+No single ``geometric interpreter'' layer is individually indispensable, but the aggregate geometric signal across layers is essential.
+Soft geometric priors play functionally irreplaceable roles in flow-based protein generation, and multi-lens interpretability is necessary to reveal this.
 
 % ============================================================
 \bibliographystyle{unsrtnat}

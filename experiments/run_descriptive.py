@@ -53,6 +53,43 @@ MODEL_CONFIGS = {
 }
 
 
+def _compute_random_precision(pdb_path: Path, min_seqsep: int = 6,
+                               contact_thresh: float = 0.8):
+    """Compute random contact precision baseline from a PDB file.
+
+    Random precision = num_contacts / num_eligible_pairs, where contacts
+    are CA-CA distance < contact_thresh nm with |i-j| >= min_seqsep.
+    This is the expected Precision@k for random attention rankings.
+    """
+    # Parse CA coordinates from PDB (coordinates in Angstroms, convert to nm)
+    ca_coords = []
+    with open(pdb_path) as f:
+        for line in f:
+            if line.startswith(("ATOM", "HETATM")) and line[12:16].strip() == "CA":
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+                ca_coords.append([x / 10.0, y / 10.0, z / 10.0])  # A -> nm
+    if len(ca_coords) < min_seqsep + 1:
+        return None
+    coords = np.array(ca_coords)
+    n = len(coords)
+
+    # Pairwise distances
+    diff = coords[:, None, :] - coords[None, :, :]
+    dists = np.sqrt((diff ** 2).sum(axis=-1))
+
+    # Eligible pairs: upper triangle with |i-j| >= min_seqsep
+    i_idx, j_idx = np.meshgrid(np.arange(n), np.arange(n), indexing='ij')
+    eligible = (j_idx - i_idx) >= min_seqsep
+    num_eligible = eligible.sum()
+    num_contacts = ((dists < contact_thresh) & eligible).sum()
+
+    if num_eligible == 0:
+        return None
+    return num_contacts / num_eligible
+
+
 def run(model: str, output_dir: Path, seeds: list = SEEDS):
     """Run crystallization analysis for each seed."""
     cfg = MODEL_CONFIGS[model]
@@ -186,6 +223,19 @@ def aggregate(model: str, output_dir: Path, seeds: list = SEEDS):
         print(f"  B-only: {pb.mean():.3f} +/- {pb.std():.3f}")
         print(f"  C-only: {pc.mean():.3f} +/- {pc.std():.3f}")
 
+    # Compute random precision baseline from generated structures
+    all_random_prec = []
+    for seed in seeds[:n_seeds]:
+        pdb_path = output_dir / f"seed_{seed}" / "generated_structure.pdb"
+        if pdb_path.exists():
+            rp = _compute_random_precision(pdb_path, min_seqsep=6, contact_thresh=0.8)
+            if rp is not None:
+                all_random_prec.append(rp)
+    if all_random_prec:
+        rp_arr = np.array(all_random_prec)
+        print(f"\nRandom baseline (contact density, |i-j|>=6, <0.8nm):")
+        print(f"  {rp_arr.mean():.4f} +/- {rp_arr.std():.4f}")
+
     # Save aggregated
     agg_path = output_dir / "aggregated.npz"
     save_dict = {
@@ -215,6 +265,10 @@ def aggregate(model: str, output_dir: Path, seeds: list = SEEDS):
         save_dict['prec_b_std'] = prec_b.std(axis=0)
         save_dict['prec_c_mean'] = prec_c.mean(axis=0)
         save_dict['prec_c_std'] = prec_c.std(axis=0)
+    if all_random_prec:
+        rp_arr = np.array(all_random_prec)
+        save_dict['random_precision_mean'] = rp_arr.mean()
+        save_dict['random_precision_std'] = rp_arr.std()
     np.savez(str(agg_path), **save_dict)
     print(f"\nAggregated metrics saved to {agg_path}")
 

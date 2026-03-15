@@ -127,6 +127,11 @@ def fig1_trajectory(models: Dict[str, dict], output_dir: Path):
         if 'rho_mean' in d:
             axes[row, 2].set_ylabel('$\\rho$')
 
+        # Reference lines
+        axes[row, 0].axhline(y=1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
+        axes[row, 1].axhline(y=1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
+        axes[row, 2].axhline(y=0.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.5)
+
         for col in range(3):
             axes[row, col].legend(loc='best')
             axes[row, col].grid(True, alpha=0.2)
@@ -237,6 +242,16 @@ def fig3_contact_precision(models: Dict[str, dict], output_dir: Path):
             axes[row, col].grid(True, alpha=0.2)
             axes[row, col].legend(fontsize=7)
             axes[row, col].set_ylim(bottom=0)
+
+            # Random baseline
+            rp = d.get('random_precision_mean', None)
+            if rp is not None:
+                rp_val = float(rp)
+                axes[row, col].axhline(y=rp_val, color='grey', linestyle='--',
+                                        linewidth=0.8, alpha=0.6)
+                if col == 0:
+                    axes[row, col].text(0.02, rp_val + 0.005, f'random={rp_val:.3f}',
+                                         fontsize=6, color='grey', alpha=0.8)
 
         axes[row, 0].set_ylabel(f'{MODEL_LABELS[model]}\nPrecision@$L/5$')
 

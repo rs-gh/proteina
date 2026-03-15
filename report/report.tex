@@ -89,27 +89,61 @@ All experiments use 5 random seeds; error bars report $\pm 1$ standard deviation
     \end{tabular}
 \end{table}
 
+\subsection{Metrics}
+
+Table~\ref{tab:metrics} summarises all metrics used in this study.
+We group them by analytical lens: \emph{descriptive} metrics characterise the pre-softmax signal, \emph{functional} metrics evaluate post-softmax utility, and \emph{causal} metrics assess structural quality under intervention.
+
+\begin{table}[h]
+    \centering
+    \caption{Summary of metrics. ``Baseline'' indicates the expected value under a null model (random attention, no ablation, or uniform distribution).}
+    \label{tab:metrics}
+    \begin{tabular}{p{2.8cm}p{5.5cm}p{2.2cm}p{2.5cm}}
+        \toprule
+        Metric & Definition & Range & Baseline \\
+        \midrule
+        \multicolumn{4}{l}{\emph{Lens 1: Descriptive (pre-softmax)}} \\[2pt]
+        $R_c$ (row-centred logit dominance) & $\|\tilde{B}\|_F / \|\tilde{C}\|_F$ where $\tilde{X}$ subtracts each row's mean from $X$ & $[0, \infty)$ & $R_c = 1$ (balanced) \\[4pt]
+        $\hat{H}$ (normalised entropy) & $-\sum_j a_{ij} \log a_{ij}\, /\, \log n$, the Shannon entropy of each attention row normalised by the maximum & $[0, 1]$ & $\hat{H} = 1$ (uniform) \\[4pt]
+        $\rho$ (spatial alignment) & Pearson correlation between attention weights and inverse pairwise C$\alpha$ distances & $[-1, 1]$ & $\rho = 0$ (no correlation) \\[4pt]
+        \midrule
+        \multicolumn{4}{l}{\emph{Lens 2: Functional (post-softmax)}} \\[2pt]
+        Precision@$L/5$ & Fraction of the top-$k$ attention-ranked residue pairs ($k = n/5$) that are true contacts. Pairs with $|i{-}j| < 6$ are excluded (local backbone contacts are trivially close). Symmetrised and APC-corrected following~\citet{rao2020transformer}. & $[0, 1]$ & Contact density ($\sim$1--3\%) \\[4pt]
+        \midrule
+        \multicolumn{4}{l}{\emph{Lens 3: Causal (ablation)}} \\[2pt]
+        $R_g$ (radius of gyration) & $\sqrt{\frac{1}{n}\sum_i \|\mathbf{r}_i - \bar{\mathbf{r}}\|^2}$, measuring compactness of the generated structure & $(0, \infty)$ nm & $\sim$1.3--1.4\,nm (no ablation) \\[4pt]
+        Steric clashes & Count of C$\alpha$ pairs with distance $< 2$\,\AA\ and $|i{-}j| \geq 3$ & $[0, \infty)$ & 0 (no ablation) \\[4pt]
+        \midrule
+        \multicolumn{4}{l}{\emph{Structure lens}} \\[2pt]
+        RMSD to final & Kabsch-aligned RMSD between intermediate-layer decoded coordinates and the final-layer prediction & $[0, \infty)$ nm & 0 at final layer \\[4pt]
+        Contact similarity & Jaccard index between contact maps of intermediate and final layer predictions ($< 8$\,\AA, $|i{-}j| \geq 6$) & $[0, 1]$ & 1 at final layer \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
 \subsection{Three Analytical Lenses}
 
 \paragraph{Lens 1: Pre-softmax signal decomposition.}
-We define the \emph{logit dominance ratio} $R = \|B\|_F / \|C\|_F$, measuring the relative Frobenius-norm magnitude of each component.
-$R \gg 1$ indicates geometry-dominated attention; $R \approx 1$ indicates balance.
-Since softmax is invariant to row-constant shifts ($\mathrm{softmax}(\mathbf{x} + c) = \mathrm{softmax}(\mathbf{x})$), we also compute a \emph{row-centred} variant $R_c = \|\tilde{B}\|_F / \|\tilde{C}\|_F$, where $\tilde{B}$ and $\tilde{C}$ are obtained by subtracting each row's mean.
-$R_c$ captures only within-row variance --- the component that actually shapes the attention distribution.
-We additionally track attention entropy $\hat{H} = H / \log n \in [0,1]$ and spatial alignment $\rho$ (Pearson correlation between attention weights and inverse ground-truth distances).
+We measure the relative magnitude of $B$ and $C$ in the pre-softmax logits.
+The raw ratio $R = \|B\|_F / \|C\|_F$ is intuitive but not softmax-aware: since $\mathrm{softmax}(\mathbf{x} + c) = \mathrm{softmax}(\mathbf{x})$, row-constant components of $B$ or $C$ inflate the Frobenius norm without affecting the attention distribution.
+We therefore use the \emph{row-centred} variant $R_c$ (Table~\ref{tab:metrics}) as our primary metric, and present $R$ vs.\ $R_c$ comparisons to justify this choice.
+We additionally track normalised entropy $\hat{H}$ (how focused each attention head is) and spatial alignment $\rho$ (how well attention correlates with 3D proximity), both computed on the post-softmax attention matrix.
 
 \paragraph{Lens 2: Post-softmax functional evaluation.}
-We evaluate how well attention maps predict true residue contacts.
-For each timestep and layer, we compute Contact Precision@$L/5$ using three attention variants: $\mathrm{softmax}(C + B)$ (full), $\mathrm{softmax}(B)$ (bias-only), and $\mathrm{softmax}(C)$ (content-only).
-Ground truth contacts are defined from the model's own final generated structure (C$\alpha$ distance $< 8$\,\AA).
+Following~\citet{rao2020transformer}, who showed that protein language model attention heads predict structural contacts, we evaluate Contact Precision@$L/5$ for three attention variants: $\mathrm{softmax}(C + B)$ (full), $\mathrm{softmax}(B)$ (bias-only), and $\mathrm{softmax}(C)$ (content-only).
+For each attention head, we symmetrise the attention matrix, apply Average Product Correction (APC) to remove marginal background signal, rank all residue pairs with sequence separation $|i{-}j| \geq 6$, and compute the fraction of the top $k = n/5$ pairs that are true contacts (C$\alpha$ distance $< 8$\,\AA).
+Short-range pairs ($|i{-}j| < 6$) are excluded because neighbouring residues along the backbone are always spatially close regardless of fold.
+Ground truth contacts are defined retrospectively from the model's own final generated structure.
+The random baseline (dashed line in figures) is the contact density among eligible pairs, i.e., the expected precision if attention rankings were uninformative.
 
 \paragraph{Lens 3: Causal ablation.}
 We zero out the pair bias $B$ under six conditions: (i)~\emph{full ablation} ($B{=}0$ at all timesteps), (ii)~\emph{early-only B} ($B$ active for $t \leq 0.5$, then zeroed), (iii)~\emph{late-only B} ($B{=}0$ for $t \leq 0.5$, then active), (iv)~\emph{layer-0 ablation} ($B{=}0$ in the first layer only), (v)~\emph{deep ablation} ($B{=}0$ in the second half of layers: 6--11 for 60M, 8--14 for 200M, 10--17 for 400M), and (vi)~\emph{baseline} (unmodified).
-Structural quality is assessed via radius of gyration ($R_g$), steric clashes, contact percentage, and mean bond length (3 seeds per condition).
+Structural quality is assessed via radius of gyration ($R_g$) and steric clash count (Table~\ref{tab:metrics}), using 3 seeds per condition.
 
-\paragraph{Supporting analyses.}
-We additionally perform a \emph{structure lens} analysis, applying the model's coordinate decoder to intermediate layer representations to measure how structure emerges across layers~\citep{nostalgebraist2020logitlens}.
-We also analyse register token attention absorption across layers and sequence-separation decomposition of the logit dominance ratio.
+\paragraph{Structure lens.}
+Inspired by the logit lens~\citep{nostalgebraist2020logitlens} from NLP interpretability, we apply the model's coordinate decoder to intermediate layer representations at each timestep.
+This produces a per-layer 3D structure prediction, which we compare to the final-layer output via Kabsch-aligned RMSD and contact map similarity (Jaccard index).
+We also decompose the logit dominance ratio by sequence separation to test whether $B$'s role differs for local vs.\ long-range interactions.
 
 % ============================================================
 \section{Results}

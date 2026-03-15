@@ -71,7 +71,7 @@ Section~\ref{sec:methods} describes the models and metrics; Section~\ref{sec:res
 
 We analyse three Proteina model variants to test scale and architecture dependence:
 \begin{itemize}
-    \item \textbf{60M} (v1.3): 12 layers, 12 heads, $d_\text{token}{=}512$, $d_\text{pair}{=}256$, no triangle updates.
+    \item \textbf{60M} (v1.3): 10 layers, 8 heads, $d_\text{token}{=}512$, $d_\text{pair}{=}256$, no triangle updates.
     \item \textbf{200M no-tri} (v1.2): 15 layers, 12 heads, $d_\text{token}{=}768$, $d_\text{pair}{=}256$, no triangle updates.
     \item \textbf{200M tri} (v1.1): 15 layers, 12 heads, $d_\text{token}{=}768$, $d_\text{pair}{=}512$, with triangle multiplicative updates to the pair representation.
 \end{itemize}
@@ -93,11 +93,27 @@ We additionally track attention entropy $\hat{H} = H / \log n \in [0,1]$ and spa
 \paragraph{Lens 2: Post-softmax functional evaluation.}
 We evaluate how well attention maps predict true residue contacts.
 For each timestep and layer, we compute Contact Precision@$L/5$ using three attention variants: $\mathrm{softmax}(C + B)$ (full), $\mathrm{softmax}(B)$ (bias-only), and $\mathrm{softmax}(C)$ (content-only).
-Ground truth contacts are defined from the model's own final generated structure (C$\alpha$ distance $< 8$\,\AA).
+Ground truth contacts are defined from the model's own final generated structure (C$\alpha$ distance $< 8$\,\AA, $|i{-}j| \geq 6$), following~\citet{rao2020transformer}.
 
 \paragraph{Lens 3: Causal ablation.}
 We zero out the pair bias $B$ under six conditions: (i)~\emph{full ablation} ($B{=}0$ at all timesteps), (ii)~\emph{early-only B} ($B$ active for $t \leq 0.5$, then zeroed), (iii)~\emph{late-only B} ($B{=}0$ for $t \leq 0.5$, then active), (iv)~\emph{layer-0 ablation} ($B{=}0$ in the first layer only), (v)~\emph{deep ablation} ($B{=}0$ in layers 5--9 for 60M, layers 8--14 for 200M), and (vi)~\emph{baseline} (unmodified).
-Structural quality is assessed via radius of gyration ($R_g$), steric clashes, contact percentage, and mean bond length (3 seeds per condition).
+Structural quality is assessed via the metrics defined in Table~\ref{tab:metrics} (3 seeds per condition).
+
+\begin{table}[t]
+    \centering
+    \caption{Structural quality metrics used in causal ablation experiments (Section~\ref{sec:results}). Thresholds follow standard conventions in protein structure validation.}
+    \label{tab:metrics}
+    \begin{tabular}{llll}
+        \toprule
+        \textbf{Metric} & \textbf{Definition} & \textbf{Threshold} & \textbf{Reference} \\
+        \midrule
+        Radius of gyration ($R_g$) & $\sqrt{\frac{1}{n}\sum_i \|\mathbf{r}_i - \bar{\mathbf{r}}\|^2}$ & --- & \citet{flory1969statistical} \\
+        Steric clashes & C$\alpha$--C$\alpha$ pairs with $d < 2.0$\,\AA, $|i{-}j| \geq 3$ & 2.0\,\AA & \citet{williams2018molprobity} \\
+        Contact density & Fraction of pairs with $d < 8.0$\,\AA, $|i{-}j| \geq 6$ & 8.0\,\AA & \citet{rao2020transformer} \\
+        Mean bond length & Mean consecutive C$\alpha$--C$\alpha$ distance & $\approx$3.8\,\AA & \citet{engh1991accurate} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
 \paragraph{Supporting analyses.}
 We additionally perform a \emph{structure lens} analysis, applying the model's coordinate decoder to intermediate layer representations to measure how structure emerges across layers~\citep{nostalgebraist2020logitlens}.
@@ -308,6 +324,16 @@ A.~Dosovitskiy et~al.
 \newblock An image is worth 16x16 words: Transformers for image recognition at scale.
 \newblock In \emph{ICLR}, 2021.
 
+\bibitem[Engh \& Huber(1991)]{engh1991accurate}
+R.~A.~Engh and R.~Huber.
+\newblock Accurate bond and angle parameters for {X}-ray protein structure refinement.
+\newblock \emph{Acta Crystallographica Section A}, 47(4):392--400, 1991.
+
+\bibitem[Flory(1969)]{flory1969statistical}
+P.~J.~Flory.
+\newblock \emph{Statistical Mechanics of Chain Molecules}.
+\newblock Interscience, New York, 1969.
+
 \bibitem[Fuchs et~al.(2020)]{fuchs2020se3}
 F.~Fuchs, D.~Worrall, V.~Fischer, and M.~Welling.
 \newblock {SE(3)-Transformers}: 3{D} roto-translation equivariant attention networks.
@@ -342,6 +368,11 @@ nostalgebraist.
 R.~Rao, J.~Meier, T.~Sercu, S.~Ovchinnikov, and A.~Rives.
 \newblock Transformer protein language models are unsupervised structure learners.
 \newblock \emph{bioRxiv}, 2020.
+
+\bibitem[Williams et~al.(2018)]{williams2018molprobity}
+C.~J.~Williams, J.~J.~Headd, N.~W.~Moriarty, M.~G.~Prisant, L.~L.~Videau, L.~N.~Deis, V.~Verma, D.~A.~Keedy, B.~J.~Hintze, V.~B.~Chen, S.~Jain, S.~M.~Lewis, W.~B.~Arendall~III, J.~Snoeyink, P.~D.~Adams, S.~C.~Lovell, J.~S.~Richardson, and D.~C.~Richardson.
+\newblock {MolProbity}: More and better reference data for improved all-atom structure validation.
+\newblock \emph{Protein Science}, 27(1):293--315, 2018.
 
 \bibitem[Thomas et~al.(2018)]{thomas2018tensor}
 N.~Thomas, T.~Smidt, S.~Kearnes, L.~Yang, L.~Li, K.~Kohlhoff, and P.~Riley.

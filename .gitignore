@@ -28,3 +28,11 @@ data/
 *.egg-info/
 checkpoints/
 analysis_output/artifacts/
+experiments/**/artifacts/
+**.npz
+**.pdb
+report/*.aux
+report/*.brf
+report/*.out
+report/*.log
+report/*.pdf

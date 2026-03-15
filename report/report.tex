@@ -232,10 +232,26 @@ In tri models, Layer-0 ablation is nearly harmless ($R_g \geq 1.1$\,nm) while de
 The 400M tri replicates the 200M tri pattern, confirming this is driven by triangle updates, not scale.
 
 \textbf{The geometric \emph{information} in $B$ is essential, not just its presence.}
-Replacing $B$ with magnitude-matched Gaussian noise (same standard deviation, random content) is equally catastrophic as zeroing $B$: the 60M model collapses to $R_g = 0.10$\,nm with 4181 clashes under random noise (vs.\ $R_g = 0.12$, 3532 clashes under zero).
-The same pattern holds across all models tested.
+Replacing $B$ with magnitude-matched Gaussian noise (same standard deviation, random content) is equally catastrophic as zeroing $B$ (Table~\ref{tab:random_bias}).
 Random noise actually performs \emph{worse} than zero in some cases, because it actively misdirects attention.
 This rules out the hypothesis that $B$ serves merely as a magnitude regulariser and confirms that the model depends on the specific geometric content of the pair bias.
+
+\begin{table}[h]
+    \centering
+    \caption{Random bias swap: replacing $B$ with magnitude-matched Gaussian noise ($n{=}100$, 3 seeds). Random $B$ collapses structures just like zero $B$, confirming the geometric \emph{information} is essential.}
+    \label{tab:random_bias}
+    \begin{tabular}{lcccccccc}
+        \toprule
+        & \multicolumn{2}{c}{\textbf{60M no-tri}} & \multicolumn{2}{c}{\textbf{200M no-tri}} & \multicolumn{2}{c}{\textbf{200M tri}} & \multicolumn{2}{c}{\textbf{400M tri}} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+        Condition & $R_g$ & Clash & $R_g$ & Clash & $R_g$ & Clash & $R_g$ & Clash \\
+        \midrule
+        Baseline & 1.44 & 0 & 1.36 & 0 & 1.42 & 0 & 1.27 & 1 \\
+        $B = 0$ & 0.12 & 3532 & 0.14 & 2968 & 0.07 & 4702 & 0.11 & 4021 \\
+        $B = \mathcal{N}(0, \sigma_B^2)$ & 0.10 & 4181 & 0.18 & 1861 & 0.08 & 4648 & 0.12 & 3675 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
 \textbf{Descriptive dominance does not imply causal necessity for individual layers.}
 Ablating each model's peak-$R_c$ layer (Table~\ref{tab:peak_ablation}) produces only moderate damage in all cases: $R_g$ drops by 5--18\% but structures remain valid (0--2 clashes).
@@ -315,8 +331,26 @@ Catastrophic failure requires ablating \emph{many} layers collectively.
 The geometric bias functions as a distributed system: each layer's contribution is replaceable, but the aggregate is essential.
 
 \textbf{The temporal boundary is length-invariant.}
-Running the temporal ablation at $n{=}50$, 100, and 200 reveals the same pattern: early-only $B$ equals full ablation, late-only $B$ preserves structure.
+Running the temporal ablation at $n{=}50$, 100, and 200 on the 60M model reveals the same pattern at all lengths (Table~\ref{tab:multilength}): early-only $B$ equals full ablation, late-only $B$ preserves structure.
 The $t \approx 0.5$ boundary does not shift with protein length, suggesting it is a property of the flow matching objective rather than the complexity of the fold.
+
+\begin{table}[h]
+    \centering
+    \caption{Temporal ablation across protein lengths (60M no-tri, 3 seeds). The pattern is length-invariant.}
+    \label{tab:multilength}
+    \begin{tabular}{lcccccc}
+        \toprule
+        & \multicolumn{2}{c}{\textbf{$n{=}50$}} & \multicolumn{2}{c}{\textbf{$n{=}100$}} & \multicolumn{2}{c}{\textbf{$n{=}200$}} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+        Condition & $R_g$ & Clash & $R_g$ & Clash & $R_g$ & Clash \\
+        \midrule
+        Baseline & 1.15 & 0 & 1.44 & 0 & 1.96 & 0 \\
+        Full ablation & 0.16 & 487 & 0.12 & 3532 & 0.09 & 18116 \\
+        Early-only $B$ & 0.16 & 487 & 0.12 & 3532 & 0.09 & 18117 \\
+        Late-only $B$ & 0.97 & 0 & 1.19 & 0 & 1.52 & 0 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
 
 \textbf{Implications for architecture design.}
 Soft geometric priors (additive biases) are effective alternatives to hard constraints (equivariant layers), provided they are present during late refinement.

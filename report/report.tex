@@ -231,6 +231,12 @@ In no-tri models, Layer-0 ablation is the most damaging single-layer interventio
 In tri models, Layer-0 ablation is nearly harmless ($R_g \geq 1.1$\,nm) while deep-layer ablation is catastrophic ($R_g \leq 0.12$\,nm, thousands of clashes).
 The 400M tri replicates the 200M tri pattern, confirming this is driven by triangle updates, not scale.
 
+\textbf{The geometric \emph{information} in $B$ is essential, not just its presence.}
+Replacing $B$ with magnitude-matched Gaussian noise (same standard deviation, random content) is equally catastrophic as zeroing $B$: the 60M model collapses to $R_g = 0.10$\,nm with 4181 clashes under random noise (vs.\ $R_g = 0.12$, 3532 clashes under zero).
+The same pattern holds across all models tested.
+Random noise actually performs \emph{worse} than zero in some cases, because it actively misdirects attention.
+This rules out the hypothesis that $B$ serves merely as a magnitude regulariser and confirms that the model depends on the specific geometric content of the pair bias.
+
 \textbf{Descriptive dominance does not imply causal necessity for individual layers.}
 Ablating each model's peak-$R_c$ layer (Table~\ref{tab:peak_ablation}) produces only moderate damage in all cases: $R_g$ drops by 5--18\% but structures remain valid (0--2 clashes).
 Even Layer~2 in the 400M tri model, which has $R_c = 29.4$ (comparable to Layer~0 in the 60M model), is individually dispensable.
@@ -308,11 +314,17 @@ Despite concentrating geometric signal ($R_c \gg 1$), the peak-$R_c$ layer can b
 Catastrophic failure requires ablating \emph{many} layers collectively.
 The geometric bias functions as a distributed system: each layer's contribution is replaceable, but the aggregate is essential.
 
+\textbf{The temporal boundary is length-invariant.}
+Running the temporal ablation at $n{=}50$, 100, and 200 reveals the same pattern: early-only $B$ equals full ablation, late-only $B$ preserves structure.
+The $t \approx 0.5$ boundary does not shift with protein length, suggesting it is a property of the flow matching objective rather than the complexity of the fold.
+
 \textbf{Implications for architecture design.}
 Soft geometric priors (additive biases) are effective alternatives to hard constraints (equivariant layers), provided they are present during late refinement.
 Conclusions about geometric bias importance drawn from magnitude-based metrics alone may not generalise across model scales --- multi-lens analysis is necessary.
 
 \textbf{Limitations and future work.}
+Because all models were trained with $B$ present, $C$ may never have been pressured to encode structural information --- the causal necessity we observe may partly reflect training-time adaptation to $B$'s availability (shortcut learning) rather than a fundamental architectural limitation.
+Testing this would require training models without $B$, which is outside the scope of this study.
 All analyses use unconditional generation with retrospective ground truth; extending to conditional generation would test whether these findings hold when external structural ground truth is available.
 The Frobenius norm ratio does not capture the cross-term interaction $\langle \tilde{B}, \tilde{C} \rangle$; a full variance decomposition could clarify whether $B$ and $C$ reinforce or oppose each other.
 

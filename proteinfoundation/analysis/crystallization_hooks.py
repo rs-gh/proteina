@@ -96,22 +96,27 @@ class BiasAblationConfig:
     """
     Configuration for pair bias ablation experiments.
 
-    Controls when pair bias B is zeroed out during generation, enabling
+    Controls when and how pair bias B is modified during generation, enabling
     causal testing of which (layer, timestep) regions require geometric bias.
 
     Attributes:
         enabled: Whether ablation is active
-        ablate_layers: Set of layer indices where B should be zeroed. None = all layers.
-        ablate_t_min: Minimum timestep for ablation (B=0 when t >= t_min)
-        ablate_t_max: Maximum timestep for ablation (B=0 when t <= t_max)
+        ablate_layers: Set of layer indices to ablate. None = all layers.
+        ablate_t_min: Minimum timestep for ablation (active when t >= t_min)
+        ablate_t_max: Maximum timestep for ablation (active when t <= t_max)
+        mode: 'zero' sets B=0; 'random' replaces B with magnitude-matched
+              Gaussian noise (same std, random content). The 'random' mode
+              tests whether the model needs the *information* in B or just
+              any additive signal of similar scale.
     """
     enabled: bool = False
     ablate_layers: Optional[set] = None
     ablate_t_min: float = 0.0
     ablate_t_max: float = 1.0
+    mode: str = 'zero'  # 'zero' or 'random'
 
     def should_ablate(self, layer_idx: int, timestep: float) -> bool:
-        """Check if pair bias should be zeroed for this (layer, timestep)."""
+        """Check if pair bias should be ablated for this (layer, timestep)."""
         if not self.enabled:
             return False
         if self.ablate_layers is not None and layer_idx not in self.ablate_layers:

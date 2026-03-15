@@ -201,7 +201,7 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
-        ablate_bias: bool = False,
+        ablate_bias: str = '',
     ):
         """
         Args:
@@ -210,7 +210,7 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
             pair_rep: Pair represnetation, shape [b, n, n, dim_pair]
             mask: Binary mask, shape [b, n]
             capture: Optional AttentionCapture to store intermediates for analysis
-            ablate_bias: If True, zero out pair bias B for causal ablation
+            ablate_bias: '' = no ablation, 'zero' = set B=0, 'random' = random noise
 
         Returns:
             Updated sequence representation, shape [b, n, dim_token].
@@ -311,7 +311,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
-        ablate_bias: bool = False,
+        ablate_bias: str = '',
     ):
         x_attn = self.mhba(x, pair_rep, cond, mask, capture=capture, ablate_bias=ablate_bias)
         if self.residual_mha:
@@ -331,7 +331,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
         cond,
         mask,
         capture: Optional["AttentionCapture"] = None,
-        ablate_bias: bool = False,
+        ablate_bias: str = '',
     ):
         """
         Args:
@@ -340,7 +340,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
             mask: binary mask, shape [b, n]
             pair_rep: Pair representation (if provided, if no bias will be ignored), shape [b, n, n, dim_pair] or None
             capture: Optional AttentionCapture to store intermediates for analysis
-            ablate_bias: If True, zero out pair bias B for causal ablation
+            ablate_bias: '' = no ablation, 'zero' = set B=0, 'random' = random noise
 
         Returns:
             Updated sequence representation, shape [b, n, dim].
@@ -730,11 +730,10 @@ class ProteinTransformerAF3(torch.nn.Module):
                 capture = AttentionCapture()
 
             # Check if pair bias should be ablated for this (layer, timestep)
-            ablate_bias = False
-            if tracker is not None:
-                ablate_bias = tracker.bias_ablation.should_ablate(
-                    i, tracker.current_timestep
-                )
+            ablate_bias = ''
+            if tracker is not None and tracker.bias_ablation.should_ablate(
+                    i, tracker.current_timestep):
+                ablate_bias = tracker.bias_ablation.mode or 'zero'
 
             seqs = self.transformer_layers[i](
                 seqs, pair_rep, c, mask, capture=capture, ablate_bias=ablate_bias,

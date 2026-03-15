@@ -72,7 +72,7 @@ class PairBiasAttention(nn.Module):
         pair_feats: Optional[Tensor],
         mask: Optional[Tensor],
         capture: Optional["AttentionCapture"] = None,
-        ablate_bias: bool = False,
+        ablate_bias: str = '',
     ) -> Tensor:
         """Multi-head scalar Attention Layer
 
@@ -80,7 +80,7 @@ class PairBiasAttention(nn.Module):
         :param pair_feats: pair features of shape (b,n,n,d_e)
         :param mask: boolean tensor of node adjacencies
         :param capture: optional AttentionCapture to store intermediates for analysis
-        :param ablate_bias: if True, zero out pair bias B for causal ablation
+        :param ablate_bias: '' = no ablation, 'zero' = set B=0, 'random' = random noise
         :return:
         """
         assert exists(self.to_bias) or not exists(pair_feats)
@@ -112,7 +112,7 @@ class PairBiasAttention(nn.Module):
         b,
         mask: Optional[Tensor],
         capture: Optional["AttentionCapture"] = None,
-        ablate_bias: bool = False,
+        ablate_bias: str = '',
     ) -> Tensor:
         """Perform attention update
 
@@ -123,7 +123,8 @@ class PairBiasAttention(nn.Module):
             b: Pair bias, shape [b, h, n, n] or scalar 0
             mask: Optional pair mask, shape [b, n, n]
             capture: Optional AttentionCapture to store intermediates for analysis
-            ablate_bias: If True, zero out pair bias B for causal ablation
+            ablate_bias: '' = no ablation, 'zero' = set B=0, 'random' = replace
+                         B with magnitude-matched Gaussian noise
 
         Returns:
             Attention output, shape [b, h, n, d]
@@ -139,7 +140,12 @@ class PairBiasAttention(nn.Module):
             sim = sim.masked_fill(~mask, max_neg_value(sim))
 
         # Ablate pair bias if requested (causal intervention)
-        bias_for_attn = 0 if ablate_bias else b
+        if ablate_bias == 'zero':
+            bias_for_attn = 0
+        elif ablate_bias == 'random' and isinstance(b, Tensor):
+            bias_for_attn = torch.randn_like(b) * b.std()
+        else:
+            bias_for_attn = b
 
         # Compute attention weights
         attn = torch.softmax(sim + bias_for_attn, dim=-1)

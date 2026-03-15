@@ -65,6 +65,7 @@ class AblationCondition:
     ablate_t_min: float = 0.0
     ablate_t_max: float = 1.0
     enabled: bool = True
+    mode: str = 'zero'  # 'zero' or 'random'
 
 
 def get_conditions(model: str):
@@ -117,7 +118,8 @@ def compute_structural_metrics(coords: torch.Tensor, mask: torch.Tensor) -> dict
     }
 
 
-def run(model: str, output_dir: Path, seeds: list = SEEDS, conditions=None):
+def run(model: str, output_dir: Path, seeds: list = SEEDS, conditions=None,
+        protein_length: int = PROTEIN_LENGTH):
     """Run bias ablation experiments."""
     sys.path.insert(0, str(REPO_ROOT))
     import os
@@ -182,14 +184,15 @@ def run(model: str, output_dir: Path, seeds: list = SEEDS, conditions=None):
                 ablate_layers=condition.ablate_layers,
                 ablate_t_min=condition.ablate_t_min,
                 ablate_t_max=condition.ablate_t_max,
+                mode=condition.mode,
             )
             tracker.enable(capture_every_n=1000, move_to_cpu=True)
-            mask = torch.ones(1, PROTEIN_LENGTH, dtype=torch.bool, device=device)
+            mask = torch.ones(1, protein_length, dtype=torch.bool, device=device)
 
             with torch.no_grad():
                 samples = model_net.generate_with_analysis(
                     nsamples=1,
-                    n=PROTEIN_LENGTH,
+                    n=protein_length,
                     dt=0.01,
                     self_cond=cfg.get("self_cond", True),
                     cath_code=None,
@@ -252,7 +255,7 @@ def save_summary(model: str, all_results: dict, output_dir: Path):
     label = MODEL_CONFIGS[model]["label"]
     summary_path = output_dir / "summary.txt"
     with open(summary_path, "w") as f:
-        f.write(f"Bias Ablation — {label}, n={PROTEIN_LENGTH}, seeds={SEEDS}\n\n")
+        f.write(f"Bias Ablation — {label}, n={protein_length}, seeds={seeds}\n\n")
         f.write(f"{'Condition':<20} {'Rg (nm)':<14} {'Contact%':<14} {'Clashes':<12} {'Bond (nm)':<14}\n")
         f.write("-" * 80 + "\n")
         for name, results in all_results.items():
@@ -294,6 +297,8 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default=None)
     parser.add_argument("--load-only", action="store_true")
     parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
+    parser.add_argument("--protein-length", type=int, default=PROTEIN_LENGTH,
+                        help=f"Protein length (default: {PROTEIN_LENGTH})")
     args = parser.parse_args()
 
     if args.output_dir:
@@ -301,11 +306,11 @@ if __name__ == "__main__":
     else:
         from datetime import date
         today = date.today().strftime("%Y-%m-%d")
-        output_dir = Path(f"experiments/causal/{args.model}/run_{today}/artifacts")
+        output_dir = Path(f"experiments/causal/{args.model}/run_{today}_n{args.protein_length}/artifacts")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.load_only:
         load_and_summarize(args.model, output_dir)
     else:
-        run(args.model, output_dir, args.seeds)
+        run(args.model, output_dir, args.seeds, protein_length=args.protein_length)

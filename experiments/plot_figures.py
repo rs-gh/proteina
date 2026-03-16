@@ -395,6 +395,63 @@ def fig6_R_vs_Rc(models: Dict[str, dict], output_dir: Path):
     print(f"Saved {path}")
 
 
+def fig4_temporal_sweep(output_dir: Path):
+    """
+    Figure 4: Fine-grained temporal ablation sweep.
+    Shows Rg vs split point for early_B and late_B conditions.
+    """
+    sweep_data = {}
+    for model in MODEL_ORDER:
+        path = Path(f"experiments/causal/{model}/temporal_sweep/artifacts/sweep_summary.npz")
+        if path.exists():
+            sweep_data[model] = dict(np.load(str(path)))
+
+    if not sweep_data:
+        print("No temporal sweep data found, skipping fig4")
+        return
+
+    available = [m for m in MODEL_ORDER if m in sweep_data]
+    n_models = len(available)
+
+    fig, axes = plt.subplots(1, n_models, figsize=(4.5 * n_models, 3.5), squeeze=False)
+
+    for col, model in enumerate(available):
+        d = sweep_data[model]
+        splits = d['split_points']
+        early_rg = d['early_rg']
+        late_rg = d['late_rg']
+        bl_rg = d['baseline_rg']
+
+        ax = axes[0, col]
+        ax.plot(splits, late_rg, 'o-', color='#2ca02c', label='Late-only $B$',
+                linewidth=2, markersize=5)
+        ax.plot(splits, early_rg, 's-', color='#d62728', label='Early-only $B$',
+                linewidth=2, markersize=5)
+        if len(bl_rg) > 0:
+            ax.axhline(y=bl_rg[0], color='black', linestyle='-', linewidth=1,
+                       alpha=0.5, label=f'Baseline ({bl_rg[0]:.2f})')
+        ax.axhline(y=0.12, color='grey', linestyle=':', linewidth=0.8, alpha=0.5)
+
+        ax.set_title(MODEL_LABELS[model])
+        ax.set_xlabel('Split point $t_s$')
+        ax.set_ylim(-0.05, 1.7)
+        ax.legend(fontsize=7, loc='center right')
+        ax.grid(True, alpha=0.2)
+
+        # Annotate
+        ax.annotate('collapsed\n(thousands of clashes)', xy=(0.5, 0.12),
+                    fontsize=6, color='#d62728', ha='center', va='bottom')
+
+    axes[0, 0].set_ylabel('$R_g$ (nm)')
+    fig.suptitle('Temporal ablation sweep: $R_g$ vs split point ($n$=100, 3 seeds)',
+                 fontsize=11, y=1.03)
+    plt.tight_layout()
+    path = output_dir / "fig4-temporal-sweep.png"
+    plt.savefig(path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved {path}")
+
+
 def fig5_structure_lens(output_dir: Path):
     """
     Figure 5: Structure lens heatmaps for all models.
@@ -503,6 +560,7 @@ if __name__ == "__main__":
     fig1_Rc_heatmaps(models, output_dir)
     fig2_seqsep(models, output_dir)
     fig3_contact_precision(models, output_dir)
+    fig4_temporal_sweep(output_dir)
     fig5_structure_lens(output_dir)
     fig6_R_vs_Rc(models, output_dir)
     fig_supplementary_H_rho(models, output_dir)

@@ -110,7 +110,7 @@ In tri models (200M tri, 400M tri), the pair representation is updated every 3--
 Table~\ref{tab:metrics} defines all metrics with null baselines.
 The primary structural quality metrics are:
 \begin{itemize}
-    \item \textbf{Radius of gyration} ($R_g$): measures compactness. Well-folded proteins of length $n{=}100$ have $R_g \approx 1.2$--$1.5$\,nm; collapsed structures have $R_g < 0.2$\,nm~\citep{geffner2025proteina}.
+    \item \textbf{Radius of gyration} ($R_g = \sqrt{\frac{1}{n}\sum_{i=1}^{n} \|\mathbf{r}_i - \bar{\mathbf{r}}\|^2}$, where $\bar{\mathbf{r}}$ is the centroid of the C$\alpha$ coordinates): the root-mean-square distance of each residue from the protein's centre of mass, measuring how spread out the structure is. A well-folded protein of length $n{=}100$ has $R_g \approx 1.2$--$1.5$\,nm; a fully collapsed structure has $R_g < 0.2$\,nm (all atoms piled into a ball); an extended chain would have $R_g > 3$\,nm~\citep{geffner2025proteina}.
     \item \textbf{Steric clashes}: count of C$\alpha$ pairs with distance $< 2$\,\AA\ and $|i{-}j| \geq 3$, representing physically impossible atomic overlaps. Valid structures have zero clashes; thousands of clashes indicate structural collapse.
 \end{itemize}
 
@@ -220,6 +220,12 @@ The temporal pattern is identical in both cases.
 \textbf{No single layer is indispensable.}
 Ablating each model's peak-$R_c$ layer (Table~\ref{tab:peak_ablation}) produces only moderate damage: $R_g$ drops by 5--18\% but structures remain valid (0--2 clashes).
 The geometric bias functions as a distributed system --- each layer's contribution is individually replaceable, but the aggregate is essential.
+
+\textbf{Ablated structures are either valid folds or collapsed --- no intermediate regime.}
+Running a pre-trained fold classifier (GearNet~\citep{zhang2023gearnet}, CA-only) on all ablation PDB files reveals a clean binary partition.
+Baseline and late-only structures are classified into diverse CATH fold classes with moderate confidence (0.7--0.99), indicating recognisable protein folds.
+Collapsed structures (full ablation, early-only $B$, random $B$) are all confidently mapped to a single class (confidence $= 1.0$) --- an artefact of the classifier encountering out-of-distribution inputs.
+No ablation condition produces structures in an intermediate regime (valid geometry but unrecognisable fold), suggesting that when the geometric bias is present late, it is sufficient to produce genuinely protein-like structures, not merely physically valid ones.
 
 \begin{table}[t]
     \centering
@@ -449,6 +455,11 @@ T.~Darcet, M.~Oquab, J.~Mairal, and P.~Julien.
 A.~Dosovitskiy et~al.
 \newblock An image is worth 16x16 words: Transformers for image recognition at scale.
 \newblock In \emph{ICLR}, 2021.
+
+\bibitem[Zhang et~al.(2023)]{zhang2023gearnet}
+Z.~Zhang, M.~Xu, A.~Jamasb, V.~Chenthamarakshan, A.~Lozano, P.~Das, and J.~Tang.
+\newblock Protein representation learning by geometric structure pretraining.
+\newblock In \emph{ICLR}, 2023.
 
 \bibitem[Fuchs et~al.(2020)]{fuchs2020se3}
 F.~Fuchs, D.~Worrall, V.~Fischer, and M.~Welling.

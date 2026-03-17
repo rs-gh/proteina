@@ -6,14 +6,29 @@ Analysis of geometric pair bias (B) vs content score (C) in Proteina's attention
 
 ```
 experiments/
-  descriptive/    # Lens 1: Pre-softmax signal decomposition (R, R_c, H, rho, seqsep)
-  functional/     # Lens 2: Post-softmax contact prediction (Precision@L/5)
-  causal/         # Lens 3: Bias ablation (6 conditions x 3 seeds)
-  structure_lens/ # Intermediate layer structure decoding (RMSD, Rg, Jaccard)
-  cross_model/    # Cross-model comparison experiments
+  descriptive/          # Lens 1: Pre-softmax signal decomposition (R, R_c, H, rho, seqsep)
+    run_descriptive.py  #   unified runner
+    60m/  200m_notri/  200m_tri/  400m_tri/
+  functional/           # Lens 2: Post-softmax contact prediction (Precision@L/5)
+    60m/  ...
+  causal/               # Lens 3: Bias ablation and causal variants
+    run_causal.py       #   standard 6-condition ablation
+    run_gap_experiment.py
+    run_peak_layer_ablation.py
+    run_random_bias.py
+    run_temporal_sweep.py
+    60m/  200m_notri/  200m_tri/  400m_tri/
+  structure_lens/       # Intermediate layer structure decoding (RMSD, Rg, Jaccard)
+    run_structure_lens.py
+    60m/  ...
+  cross_model/          # Cross-model comparison experiments
+  evals/                # Evaluation scripts (post-hoc analysis of generated structures)
+    run_gearnet_eval.py #   GearNet fold classification (mean max fold probability)
+  plot_figures.py       # Orchestrates figures across all lenses
+  README.md
 ```
 
-Within each lens, experiments are organized by model: `60m/`, `200m_notri/`, `200m_tri/`, `400m_tri/`.
+Within each lens, experiment outputs are organized by model: `60m/`, `200m_notri/`, `200m_tri/`, `400m_tri/`.
 
 ## Experiment Log
 

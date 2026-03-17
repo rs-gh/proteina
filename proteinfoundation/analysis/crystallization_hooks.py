@@ -114,6 +114,7 @@ class BiasAblationConfig:
     ablate_t_min: float = 0.0
     ablate_t_max: float = 1.0
     mode: str = 'zero'  # 'zero' or 'random'
+    active_intervals: Optional[list] = None  # list of (t_min, t_max) where B is ON
 
     def should_ablate(self, layer_idx: int, timestep: float) -> bool:
         """Check if pair bias should be ablated for this (layer, timestep)."""
@@ -121,6 +122,12 @@ class BiasAblationConfig:
             return False
         if self.ablate_layers is not None and layer_idx not in self.ablate_layers:
             return False
+        if self.active_intervals is not None:
+            # B is ON during active_intervals, OFF everywhere else
+            for t_lo, t_hi in self.active_intervals:
+                if t_lo <= timestep <= t_hi:
+                    return False  # B is active here, don't ablate
+            return True  # not in any active interval → ablate
         return self.ablate_t_min <= timestep <= self.ablate_t_max
 
 

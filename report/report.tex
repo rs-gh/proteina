@@ -178,6 +178,32 @@ Full removal of $B$ is catastrophic in every model: structures collapse to $R_g 
 Giving $B$ only during early generation ($t \leq 0.5$) then removing it is indistinguishable from full ablation in all four models (Table~\ref{tab:ablation}, rows 3--4).
 A fine-grained temporal sweep (Figure~\ref{fig:temporal_sweep}) reveals this is not a ``cliff'' at a specific timestep but a one-sided asymmetry: removing $B$ after \emph{any} point (including $t{=}0.2$) produces collapse, while providing $B$ only during the last portion (even just $t > 0.8$) always preserves valid structures, albeit with reduced compactness.
 
+\textbf{The model has no memory of early $B$.}
+The temporal asymmetry could arise because (a)~only late $B$ matters, or (b)~removing $B$ after the model has seen it destabilises the trajectory.
+A ``gap'' experiment distinguishes these: $B$ is active for $t \in [0, 0.3] \cup [0.7, 1]$ (on, then off, then on again).
+If the gap structures are comparable to late-only controls ($B$ on only for $t > 0.7$), then early $B$ is truly irrelevant; if worse, then removing $B$ after showing it causes additional damage.
+Table~\ref{tab:gap} shows the gap conditions match the late-only controls within $0.02$\,nm in both models tested.
+The model does not retain any benefit --- or harm --- from $B$'s early presence; only the current availability of $B$ matters.
+
+\begin{table}[h]
+    \centering
+    \caption{Gap experiment ($n{=}100$, 3 seeds). Gap conditions (B on $\to$ off $\to$ on) match late-only controls.}
+    \label{tab:gap}
+    \begin{tabular}{lcccc}
+        \toprule
+        & \multicolumn{2}{c}{\textbf{60M no-tri}} & \multicolumn{2}{c}{\textbf{400M tri}} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5}
+        Condition & $R_g$ & Clash & $R_g$ & Clash \\
+        \midrule
+        Baseline & 1.44 & 0 & 1.27 & 1 \\
+        Gap [0,0.3]$\cup$[0.7,1] & 1.10 & 0 & 1.05 & 1 \\
+        Late-only [0.7,1] & 1.11 & 0 & 1.04 & 1 \\
+        Gap [0,0.2]$\cup$[0.8,1] & 1.05 & 0 & 0.96 & 4 \\
+        Late-only [0.8,1] & 1.06 & 0 & 0.96 & 2 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
 \textbf{Scale and length invariance.}
 The temporal pattern replicates identically across all four models (Table~\ref{tab:ablation}) and across protein lengths $n{=}50$, 100, and 200 (Table~\ref{tab:multilength}).
 The boundary does not shift with model scale or protein complexity, suggesting it is a property of the flow matching objective itself.

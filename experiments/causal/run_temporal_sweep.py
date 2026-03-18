@@ -25,8 +25,9 @@ while not (REPO_ROOT / ".git").exists():
     REPO_ROOT = REPO_ROOT.parent
 
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "experiments" / "causal"))
 
-from experiments.run_causal import (
+from run_causal import (
     MODEL_CONFIGS, AblationCondition, run, compute_structural_metrics,
     SEEDS,
 )

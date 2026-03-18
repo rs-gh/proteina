@@ -25,8 +25,9 @@ while not (REPO_ROOT / ".git").exists():
     REPO_ROOT = REPO_ROOT.parent
 
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT / "experiments" / "causal"))
 
-from experiments.run_causal import (
+from run_causal import (
     MODEL_CONFIGS, AblationCondition, run, SEEDS,
 )
 
@@ -86,7 +87,7 @@ def run_gap(model: str, output_dir: Path, seeds=SEEDS):
     from proteinfoundation.proteinflow.proteina import Proteina
     from proteinfoundation.utils.ff_utils.pdb_utils import write_prot_to_pdb
     from proteinfoundation.utils.coors_utils import trans_nm_to_atom37
-    from experiments.run_causal import compute_structural_metrics
+    from run_causal import compute_structural_metrics
 
     cfg_model = MODEL_CONFIGS[model]
     config_path = str(REPO_ROOT / "configs" / "experiment_config")

@@ -31,28 +31,32 @@ MODEL_CONFIGS = {
         "ckpt_path": "checkpoints/proteina_v1.3_dfs_60m_notri_v1.0",
         "label": "60M (v1.3, 12L)",
         "num_layers": 12,
-        "deep_layers": set(range(6, 12)),  # layers 6-11
+        "deep_layers": set(range(6, 12)),       # layers 6-11
+        "first_half_layers": set(range(0, 6)),  # layers 0-5
     },
     "200m_notri": {
         "config_name": "inference_ucond_200m_notri",
         "ckpt_path": "checkpoints/proteina_v1.2_dfs_200m_notri_v1.0",
         "label": "200M no-tri (v1.2, 15L)",
         "num_layers": 15,
-        "deep_layers": set(range(8, 15)),  # layers 8-14
+        "deep_layers": set(range(8, 15)),       # layers 8-14
+        "first_half_layers": set(range(0, 8)),  # layers 0-7
     },
     "200m_tri": {
         "config_name": "inference_ucond_200m_tri",
         "ckpt_path": "checkpoints/proteina_v1.1_dfs_200m_tri_v1.0",
         "label": "200M tri (v1.1, 15L)",
         "num_layers": 15,
-        "deep_layers": set(range(8, 15)),  # layers 8-14
+        "deep_layers": set(range(8, 15)),       # layers 8-14
+        "first_half_layers": set(range(0, 8)),  # layers 0-7
     },
     "400m_tri": {
         "config_name": "inference_ucond_400m_tri",
         "ckpt_path": "checkpoints/proteina_v1.4_d21m_400m_tri_v1.0",
         "label": "400M tri (v1.4, 18L)",
         "num_layers": 18,
-        "deep_layers": set(range(10, 18)),  # layers 10-17
+        "deep_layers": set(range(10, 18)),       # layers 10-17
+        "first_half_layers": set(range(0, 10)), # layers 0-9
     },
 }
 
@@ -71,7 +75,9 @@ class AblationCondition:
 def get_conditions(model: str):
     cfg = MODEL_CONFIGS[model]
     deep_layers = cfg["deep_layers"]
+    first_half_layers = cfg["first_half_layers"]
     deep_desc = f"layers {min(deep_layers)}-{max(deep_layers)}"
+    first_half_desc = f"layers {min(first_half_layers)}-{max(first_half_layers)}"
     return [
         AblationCondition(name="baseline", description="No ablation (control)", enabled=False),
         AblationCondition(name="full_ablation", description="B=0 everywhere"),
@@ -79,8 +85,8 @@ def get_conditions(model: str):
                           ablate_t_min=0.5, ablate_t_max=1.0),
         AblationCondition(name="late_only_B", description="B=0 for t<=0.5, then B active",
                           ablate_t_min=0.0, ablate_t_max=0.5),
-        AblationCondition(name="layer0_ablation", description="B=0 at layer 0 only",
-                          ablate_layers={0}),
+        AblationCondition(name="first_half_ablation", description=f"B=0 at {first_half_desc}",
+                          ablate_layers=first_half_layers),
         AblationCondition(name="deep_ablation", description=f"B=0 at {deep_desc}",
                           ablate_layers=deep_layers),
     ]
@@ -255,7 +261,7 @@ def save_summary(model: str, all_results: dict, output_dir: Path):
     label = MODEL_CONFIGS[model]["label"]
     summary_path = output_dir / "summary.txt"
     with open(summary_path, "w") as f:
-        f.write(f"Bias Ablation — {label}, n={protein_length}, seeds={seeds}\n\n")
+        f.write(f"Bias Ablation — {label}, n={PROTEIN_LENGTH}, seeds={SEEDS}\n\n")
         f.write(f"{'Condition':<20} {'Rg (nm)':<14} {'Contact%':<14} {'Clashes':<12} {'Bond (nm)':<14}\n")
         f.write("-" * 80 + "\n")
         for name, results in all_results.items():

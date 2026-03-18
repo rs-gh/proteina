@@ -69,7 +69,7 @@ def run_gearnet_on_pdbs(pdb_paths: list, device: str = "cpu") -> dict:
         pred_C: [N_structures, 5] class-level logits
         pred_A: [N_structures, 43] architecture-level logits
         pred_T: [N_structures, 1336] topology-level logits
-        confidence_C/A/T: [N_structures] max softmax probability per structure
+        mean_max_fold_prob_C/A/T: [N_structures] max softmax probability per structure (mean max fold probability)
     """
     from proteinfoundation.metrics.gearnet_utils import NoTrainCAGearNet
 
@@ -188,7 +188,7 @@ if __name__ == "__main__":
     # Print summary table
     print(f"\n{'='*90}")
     print(f"GearNet Fold Prediction — {args.model}")
-    print(f"{'Condition':<40} {'Conf_C':<10} {'Conf_A':<10} {'Conf_T':<10} {'Top C':<8}")
+    print(f"{'Condition':<40} {'MaxFoldP_C':<12} {'MaxFoldP_A':<12} {'MaxFoldP_T':<12} {'Top C':<8}")
     print(f"{'='*90}")
 
     for cond_name, results in sorted(all_results.items()):
@@ -200,5 +200,6 @@ if __name__ == "__main__":
         print(f"{cond_name:<40} {conf_c:.3f}     {conf_a:.3f}     {conf_t:.3f}     {top_c_str}")
 
     print(f"{'='*90}")
-    print("\nConf_C/A/T = mean max softmax probability for CATH class/architecture/topology")
-    print("Higher confidence = more recognisable as a known protein fold")
+    print("\nMaxFoldP_C/A/T = mean max fold probability at CATH class/architecture/topology level")
+    print("= mean over structures of max(softmax(GearNet logits))")
+    print("Higher = more recognisable as a known protein fold (distinct from distributional fS of Proteina paper)")

@@ -10,7 +10,7 @@
 
 \title[Geometric Bias in Flow-Based Protein Structure Generation]{How Does Geometric Bias Shape the Denoising Trajectory\\
 in Flow-Based Protein Structure Generation?}
-\author[S. Ravishankar]{Shreyas Ravishankar\thanks{Code available at \url{https://github.com/rs-gh/proteina/tree/attention-hook}}\\
+\author[S. Ravishankar]{Shreyas Ravishankar\thanks{Code available at \url{https://github.com/rs-gh/proteina-interpretability}}\\
 \institute{University of Cambridge}\\
 \email{sr2173@cam.ac.uk}}
 
@@ -41,7 +41,7 @@ At each step, every attention layer computes:
     A = \mathrm{softmax}(C + B)
     \label{eq:attention}
 \end{equation}
-where $C = QK^\top / \sqrt{d}$ is the content score and $B$ is the pair bias, constructed from binned pairwise distances of the \emph{current} noisy structure $\mathbf{x}_t$.
+where $C = QK^\top / \sqrt{d}$ is the content score and $B$ is the pair bias, constructed from binned pairwise distances of the current noisy structure $\mathbf{x}_t$.
 At $t{=}0$, these distances are uninformative; at $t{=}1$, they encode the near-final structure.
 Since softmax is a nonlinear operation, attribution of $B$'s contribution to $A$ is ambiguous: its effect depends on how $B$ interacts with $C$, not on its magnitude alone. We therefore use four complementary lenses to study $B$'s role, using \emph{early/late} for generation time and \emph{shallow/deep} for layer depth (formalised in Section~\ref{sec:methods}):
 \begin{enumerate}
@@ -128,9 +128,7 @@ Table~\ref{tab:metrics} defines all metrics used across the four lenses.
 
 \paragraph{Lens 1: Descriptive.}
 We measure $R_c$, the row-centred Frobenius norm ratio (Table~\ref{tab:metrics}).
-Row-centering removes energy that is invariant under softmax: row-constant components inflate the raw ratio $R$ without affecting attention.
-To illustrate, Appendix~\ref{sec:appendix_rawvsrc} shows how this correction changes $R$ by $6\times$ at late timesteps for the 60M model.
-We also decompose $R_c$ by sequence separation to test whether $B$'s role differs for local vs.\ long-range pairs.
+Row-centering removes softmax-invariant energy (row-constant components inflate $R$ without affecting attention; see Appendix~\ref{sec:appendix_rawvsrc} for a $6\times$ correction at $t{=}1$); we further decompose $R_c$ by sequence separation (Appendix~\ref{sec:appendix_seqsep}).
 
 \paragraph{Lens 2: Causal.}
 We zero or replace $B$ under the conditions in Table~\ref{tab:ablation_conditions}, evaluating structural quality via $R_g$ and steric clashes (Table~\ref{tab:ablation}).
@@ -142,16 +140,16 @@ We zero or replace $B$ under the conditions in Table~\ref{tab:ablation_condition
     \label{tab:ablation_conditions}
     \begin{tabular}{lll}
         \toprule
-        Condition & Time window & Layer scope \\
+        Condition & Time ($B$ active) & Layers ($B$ active) \\
         \midrule
-        Baseline & Full ($t \in [0,1]$) & All layers \\
-        Full ablation & None & All layers \\
+        Baseline & Full & All layers \\
+        Full ablation & --- & --- \\
         Early-only $B$ & $t \leq 0.5$ & All layers \\
         Late-only $B$ & $t > 0.5$ & All layers \\
-        Shallow ablation & Full & First half of layers \\
-        Deep ablation & Full & Second half of layers \\
-        Peak-$R_c$ ablation & Full & Peak-$R_c$ layer only \\
-        Random $B$ & Full & All layers (Gaussian noise, matched $\sigma$) \\
+        Deep-only $B$ & Full & Second half (deep) \\
+        Shallow-only $B$ & Full & First half (shallow) \\
+        Peak-$R_c$ ablation & Full & All except peak-$R_c$ \\
+        Random $B$ & Full & --- (noise substituted) \\
         Gap experiment & $t \in [0, 0.3] \cup [0.7, 1]$ & All layers \\
         \bottomrule
     \end{tabular}
@@ -210,7 +208,7 @@ Having characterised where $B$ dominates descriptively, we ask when and where it
     \centering
     \footnotesize
     \setlength{\tabcolsep}{3.5pt}
-    \caption{Structural quality under bias ablation ($n{=}100$, 3 seeds). Temporal asymmetry is universal; spatial sensitivity is architecture-dependent. $R_g$ and Cl are means across 3 seeds (1 independently generated structure per seed). \textsuperscript{\S}Shallow: L0--5 (60M), L0--7 (200M), L0--9 (400M tri). \textsuperscript{\textdagger}Deep: L6--11 (60M), L8--14 (200M), L10--17 (400M). \textsuperscript{\ddag}Peak-$R_c$: L0 (60M), L2 (200M no-tri), L9 (200M tri), L2 (400M tri). The single clash in the 400M tri baseline reflects one steric contact across the 3 seeds; this is within the normal variation of valid protein backbones.}
+    \caption{Structural quality under bias ablation ($n{=}100$, 3 seeds). Temporal asymmetry is universal; spatial sensitivity is architecture-dependent. $R_g$ and Cl are means across 3 seeds (1 independently generated structure per seed). \textsuperscript{\S}Deep-only $B$: $B$ active in L6--11 (60M), L8--14 (200M), L10--17 (400M). \textsuperscript{\textdagger}Shallow-only $B$: $B$ active in L0--5 (60M), L0--7 (200M), L0--9 (400M tri). \textsuperscript{\ddag}Peak-$R_c$: L0 (60M), L2 (200M no-tri), L9 (200M tri), L2 (400M tri). The single clash in the 400M tri baseline reflects one steric contact across the 3 seeds; this is within the normal variation of valid protein backbones.}
     \label{tab:ablation}
     \begin{tabular}{lcccccccc}
         \toprule
@@ -228,8 +226,8 @@ Having characterised where $B$ dominates descriptively, we ask when and where it
         Late-only $B$ ($t{>}0.5$) & 1.19 & 0 & 1.19 & 4 & 1.12 & 2 & 1.17 & 1 \\
         \midrule
         \multicolumn{9}{l}{\emph{Spatial}} \\[2pt]
-        Shallow\textsuperscript{\S} & 0.41 & 558 & 0.57 & 51 & 0.90 & 0 & 0.82 & 1 \\
-        Deep\textsuperscript{\textdagger} & 0.60 & 23 & 0.63 & 32 & 0.05 & 4752 & 0.12 & 3560 \\
+        Deep-only $B$\textsuperscript{\S} & 0.41 & 558 & 0.57 & 51 & 0.90 & 0 & 0.82 & 1 \\
+        Shallow-only $B$\textsuperscript{\textdagger} & 0.60 & 23 & 0.63 & 32 & 0.05 & 4752 & 0.12 & 3560 \\
         Peak-$R_c$ layer\textsuperscript{\ddag} & 0.81 & 1 & 1.28 & 1 & 1.17 & 1 & 1.13 & 1 \\
         \bottomrule
     \end{tabular}
@@ -279,8 +277,8 @@ Early $B$ leaves no lasting trace: the trajectory appears to forget both its pre
 \end{table}
 
 \textbf{Spatial sensitivity depends on architecture.}
-In no-tri models, removing $B$ from the first half of layers is more damaging than removing it from the second half.
-In tri models, this inverts: first-half ablation is relatively benign ($R_g \geq 0.82$\,nm, 0--1 clashes), while deep (second-half) ablation is catastrophic ($R_g \leq 0.12$\,nm, thousands of clashes).
+In no-tri models, removing $B$ from the first half of layers (Deep-only $B$) is more damaging than removing it from the second half (Shallow-only $B$).
+In tri models, this inverts: first-half ablation (Deep-only $B$) is relatively benign ($R_g \geq 0.82$\,nm, 0--1 clashes), while second-half ablation (Shallow-only $B$) is catastrophic ($R_g \leq 0.12$\,nm, thousands of clashes).
 This potentially suggests that the first and second halves are complementary layer sets, and their causal roles are swapped across architectures.
 Ablating the peak-$R_c$ layer individually produces only moderate damage ($R_g$ drops 5--18\%, structures remain valid), suggesting the geometric signal is not concentrated in a single bottleneck layer.
 We did not test temporal sweeps within spatial ablation conditions, but the cross-model universality of the temporal pattern suggests it is robust to layer scope.

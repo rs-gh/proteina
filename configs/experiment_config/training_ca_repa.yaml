@@ -1,0 +1,15 @@
+defaults:
+  - training_ca
+  - _self_
+
+run_name_: proteina_60m_repa
+
+# REPA (Representation Alignment) configuration
+repa:
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]                   # Transformer layer indices to align (0-indexed, out of 10)
+  lambda_repa: 0.5              # REPA loss weight
+  combination_mode: additive    # "additive" (fm + λ*repa) or "tradeoff" ((1-λ)*fm + λ*repa)
+  similarity_type: cosine       # "cosine" or "mse"
+  projector_hidden_dim: 512     # Projector MLP intermediate dimension
+  projector_num_layers: 2       # Number of projector MLP layers

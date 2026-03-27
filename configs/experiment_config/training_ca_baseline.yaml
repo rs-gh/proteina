@@ -1,0 +1,5 @@
+defaults:
+  - training_ca
+  - _self_
+
+run_name_: proteina_60m_baseline

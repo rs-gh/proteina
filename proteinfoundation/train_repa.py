@@ -263,6 +263,11 @@ if __name__ == "__main__":
         ckpt = torch.load(pretrain_ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt["state_dict"], strict=False)
 
+    # torch.compile for faster training (requires constant tensor shapes via PaddingTransform)
+    if cfg_exp.get("compile", False):
+        log_info("Compiling model.nn with torch.compile (mode=default)")
+        model.nn = torch.compile(model.nn)
+
     # Train
     plugins = []
     show_prog_bar = args.show_prog_bar

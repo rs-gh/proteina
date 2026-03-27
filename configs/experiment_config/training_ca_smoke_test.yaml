@@ -1,0 +1,8 @@
+defaults:
+  - training_ca
+  - _self_
+
+run_name_: proteina_smoke_test
+
+# Use smoke test dataset (random splits, no MMseqs2)
+dataset: pdb_smoke_test

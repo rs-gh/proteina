@@ -3,3 +3,9 @@ defaults:
   - _self_
 
 run_name_: proteina_60m_baseline
+
+# Use random splits (no MMseqs2 required)
+dataset: pdb_smoke_test
+
+log:
+  wandb_project: proteina-repa

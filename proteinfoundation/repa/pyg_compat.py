@@ -99,6 +99,25 @@ def patch_pyg_imports():
     torch_scatter_composite.scatter_mean = _scatter_mean_native
     sys.modules["torch_scatter.composite"] = torch_scatter_composite
 
+    # Create fake torch_sparse module (imported but not actually called in proteina)
+    if "torch_sparse" not in sys.modules:
+        try:
+            import torch_sparse  # noqa: F401
+            # Check if it actually works
+            torch_sparse.SparseTensor
+        except (ImportError, OSError, AttributeError):
+            torch_sparse = types.ModuleType("torch_sparse")
+            torch_sparse.SparseTensor = None  # type stub
+            sys.modules["torch_sparse"] = torch_sparse
+
+    # Create fake torch_cluster module if needed
+    if "torch_cluster" not in sys.modules:
+        try:
+            import torch_cluster  # noqa: F401
+        except (ImportError, OSError):
+            torch_cluster = types.ModuleType("torch_cluster")
+            sys.modules["torch_cluster"] = torch_cluster
+
     print("[pyg_compat] Patched torch_scatter with native PyTorch ops")
 
 

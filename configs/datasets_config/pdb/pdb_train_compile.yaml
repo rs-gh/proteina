@@ -10,8 +10,8 @@ datamodule:
     - _target_: "proteinfoundation.datasets.transforms.GlobalRotationTransform"
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
     - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
-      max_size: 256  # constant tensor shapes for torch.compile
-  batch_size: 4
+      max_size: 512  # constant tensor shapes for torch.compile; ~88% PDB coverage
+  batch_size: 8  # fits in A100 80GB with SDPA+compile (peak ~33GB at B=4, ~66GB at B=8)
   num_workers: 2  # spawn smoke test passed; 2 is sweet spot (no gain at 4)
   pin_memory: True
 
@@ -22,7 +22,7 @@ datamodule:
     molecule_type: "protein"
     experiment_types: ["diffraction", "EM"]
     min_length: 50
-    max_length: 256
+    max_length: 512  # ~88% of PDB protein chains (up from 58% at 256)
     oligomeric_min: null
     oligomeric_max: null
     best_resolution: 0.0

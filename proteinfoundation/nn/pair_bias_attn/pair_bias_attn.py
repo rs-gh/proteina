@@ -45,12 +45,14 @@ class PairBiasAttention(nn.Module):
         dim_out: int,
         qkln: bool,
         pair_dim: Optional[int] = None,
+        use_sdpa: bool = True,
         **kawrgs  # noqa
     ):
         super().__init__()
         inner_dim = dim_head * heads
         self.node_dim, self.pair_dim = node_dim, pair_dim
         self.heads, self.scale = heads, dim_head**-0.5
+        self.use_sdpa = use_sdpa
         self.to_qkv = nn.Linear(node_dim, inner_dim * 3, bias=bias)
         self.to_g = nn.Linear(node_dim, inner_dim)
         self.to_out_node = nn.Linear(inner_dim, default(dim_out, node_dim))
@@ -91,17 +93,36 @@ class PairBiasAttention(nn.Module):
         q, k, v, g = map(
             lambda t: rearrange(t, "b ... (h d) -> b h ... d", h=h), (q, k, v, g)
         )
-        attn_feats = self._attn(q, k, v, b, mask)
+        attn_feats = self._attn_sdpa(q, k, v, b, mask) if self.use_sdpa else self._attn(q, k, v, b, mask)
         attn_feats = rearrange(
             torch.sigmoid(g) * attn_feats, "b h n d -> b n (h d)", h=h
         )
         return self.to_out_node(attn_feats)
 
     def _attn(self, q, k, v, b, mask: Optional[Tensor]) -> Tensor:
-        """Perform attention update"""
+        """Manual attention: Q @ K^T * scale + bias -> softmax -> @ V."""
         sim = einsum("b h i d, b h j d -> b h i j", q, k) * self.scale
         if exists(mask):
             mask = rearrange(mask, "b i j -> b () i j")
             sim = sim.masked_fill(~mask, max_neg_value(sim))
         attn = torch.softmax(sim + b, dim=-1)
         return einsum("b h i j, b h j d -> b h i d", attn, v)
+
+    def _attn_sdpa(self, q, k, v, b, mask: Optional[Tensor]) -> Tensor:
+        """SDPA attention: fused kernels via F.scaled_dot_product_attention.
+
+        The ``attn_mask`` parameter is an additive float bias applied before
+        softmax — same semantics as the manual ``sim + b`` path.
+        """
+        attn_bias = b if not isinstance(b, int) else None
+
+        if exists(mask):
+            mask_bias = rearrange(mask, "b i j -> b () i j")
+            mask_bias = torch.zeros_like(mask_bias, dtype=q.dtype).masked_fill(
+                ~mask_bias, max_neg_value(q)
+            )
+            attn_bias = attn_bias + mask_bias if exists(attn_bias) else mask_bias
+
+        return torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_bias, scale=self.scale,
+        )

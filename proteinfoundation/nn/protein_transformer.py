@@ -171,7 +171,7 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
     """Pair biased multi-head self-attention with adaptive layer norm applied to input
     and adaptive scaling applied to output."""
 
-    def __init__(self, dim_token, dim_pair, nheads, dim_cond, use_qkln):
+    def __init__(self, dim_token, dim_pair, nheads, dim_cond, use_qkln, use_sdpa=True):
         super().__init__()
         dim_head = int(dim_token // nheads)
         self.adaln = AdaptiveLayerNorm(dim=dim_token, dim_cond=dim_cond)
@@ -183,6 +183,7 @@ class MultiHeadBiasedAttentionADALN_MM(torch.nn.Module):
             dim_out=dim_token,
             qkln=use_qkln,
             pair_dim=dim_pair,
+            use_sdpa=use_sdpa,
         )
         self.scale_output = AdaptiveLayerNormOutputScale(
             dim=dim_token, dim_cond=dim_cond
@@ -262,6 +263,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
         parallel_mha_transition,
         use_attn_pair_bias,
         use_qkln,
+        use_sdpa=True,
         dropout=0.0,
         expansion_factor=4,
     ):
@@ -282,6 +284,7 @@ class MultiheadAttnAndTransition(torch.nn.Module):
             nheads=nheads,
             dim_cond=dim_cond,
             use_qkln=use_qkln,
+            use_sdpa=use_sdpa,
         )
 
         self.transition = TransitionADALN(
@@ -538,6 +541,7 @@ class ProteinTransformerAF3(torch.nn.Module):
                     parallel_mha_transition=kwargs["parallel_mha_transition"],
                     use_attn_pair_bias=kwargs["use_attn_pair_bias"],
                     use_qkln=self.use_qkln,
+                    use_sdpa=kwargs.get("use_sdpa", True),
                 )
                 for _ in range(self.nlayers)
             ]

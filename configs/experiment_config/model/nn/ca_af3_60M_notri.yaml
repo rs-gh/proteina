@@ -66,5 +66,6 @@ use_tri_mult: False  # whether to use triangular multiplication layers in pair u
 
 num_registers: 10
 use_qkln: True
+use_sdpa: True  # use F.scaled_dot_product_attention (FlashAttention/mem-efficient); False for manual einsum path
 
 num_buckets_predict_pair: 64

@@ -2,7 +2,7 @@ defaults:
   - training_ca
   - _self_
 
-run_name_: proteina_60m_baseline_compile
+run_name_: proteina_60m_baseline
 
 # Full dataset with PaddingTransform for torch.compile
 dataset: pdb_train_compile

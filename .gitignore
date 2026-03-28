@@ -23,4 +23,5 @@ wandb/
 /results_downloaded*
 tmp/*
 *.fasta
-inference/*
+inference/*store
+proteinfoundation/store

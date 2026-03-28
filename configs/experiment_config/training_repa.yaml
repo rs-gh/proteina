@@ -4,8 +4,11 @@ defaults:
 
 run_name_: proteina_60m_repa
 
-# Use random splits (no MMseqs2 required)
-dataset: pdb_smoke_test
+# Full dataset with PaddingTransform for torch.compile
+dataset: pdb_train_compile
+
+# Enable torch.compile for faster training
+compile: true
 
 log:
   wandb_project: proteina-repa

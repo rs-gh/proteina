@@ -10,6 +10,9 @@ dataset: pdb_smoke_test
 log:
   wandb_project: proteina-repa
 
+ema:
+  validate_original_weights: True
+
 # REPA (Representation Alignment) configuration
 repa:
   gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

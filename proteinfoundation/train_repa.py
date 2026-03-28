@@ -9,6 +9,8 @@ import sys
 
 root = os.path.abspath(".")
 sys.path.append(root)
+# graphein_utils lives at src/proteina/graphein_utils/ (sibling to proteinfoundation/)
+sys.path.append(os.path.abspath(".."))
 
 # Patch torch_scatter/torch_sparse with native PyTorch ops if C extensions
 # don't work (common on HPC clusters with GLIBC < 2.32 or ABI mismatches).
@@ -179,7 +181,7 @@ if __name__ == "__main__":
         config_path = "../configs/datasets_config/"
     with hydra.initialize(config_path, version_base=hydra.__version__):
         cfg_data = hydra.compose(config_name=cfg_exp["dataset"])
-        cfg_data.datamodule.num_workers = num_cpus
+        cfg_data.datamodule.num_workers = min(num_cpus, cfg_data.datamodule.num_workers)
         if cfg_data.get("exclude_id_pkl_path") is not None:
             with open(cfg_data.exclude_id_pkl_path, "rb") as fin:
                 exclude_ids = pickle.load(fin)
@@ -194,7 +196,16 @@ if __name__ == "__main__":
     # Set logger
     wandb_logger = None
     if cfg_exp.log.log_wandb and not args.nolog:
-        wandb_logger = WandbLogger(project=cfg_exp.log.wandb_project, id=run_name)
+        from datetime import datetime
+
+        display_name = f"{datetime.now().strftime('%m%d-%H%M')}-{run_name}"
+        resuming = last_ckpt_path is not None
+        wandb_logger = WandbLogger(
+            project=cfg_exp.log.wandb_project,
+            id=run_name,
+            name=display_name,
+            resume="must" if resuming else "allow",
+        )
         callbacks.append(LogEpochTimeCallback())
         callbacks.append(LogSetpTimeCallback())
 

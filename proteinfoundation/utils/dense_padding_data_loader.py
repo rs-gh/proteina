@@ -15,6 +15,7 @@ from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import torch.utils.data
 import torch_geometric
+import proteinfoundation.repa.pyg_compat  # noqa: F401 — patch before torch_sparse (worker processes)
 import torch_sparse
 from torch.utils.data.dataloader import default_collate
 from torch_geometric.data import Batch, Dataset

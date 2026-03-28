@@ -6,3 +6,10 @@ run_name_: proteina_smoke_test
 
 # Use smoke test dataset (random splits, no MMseqs2)
 dataset: pdb_smoke_test
+
+log:
+  wandb_project: proteina-repa
+
+# Disable EMA weight swap during validation (crashes with torch 2.9 + Lightning)
+ema:
+  validate_original_weights: True

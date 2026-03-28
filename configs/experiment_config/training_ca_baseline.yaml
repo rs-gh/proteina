@@ -9,3 +9,6 @@ dataset: pdb_smoke_test
 
 log:
   wandb_project: proteina-repa
+
+ema:
+  validate_original_weights: True

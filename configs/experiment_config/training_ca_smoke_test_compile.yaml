@@ -1,0 +1,17 @@
+defaults:
+  - training_ca
+  - _self_
+
+run_name_: proteina_smoke_test_compile
+
+# Use compile-ready dataset (PaddingTransform for constant tensor shapes)
+dataset: pdb_smoke_test_compile
+
+# Enable torch.compile
+compile: true
+
+log:
+  wandb_project: proteina-repa
+
+ema:
+  validate_original_weights: True

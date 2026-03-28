@@ -2016,6 +2016,8 @@ class PDBManager:
         with open(self.root_dir / self.ligand_map_filename) as f:
             for line in f:
                 line = line.strip()
+                if not line:
+                    continue
                 params = line.split()
                 ligand_map[params[0]] = params[1:]
         inv = {}

@@ -4,8 +4,8 @@ defaults:
 
 run_name_: proteina_60m_repa
 
-# Full dataset with PaddingTransform for torch.compile
-dataset: pdb_train_compile
+# Full dataset via LMDB (run convert_to_lmdb.sh first)
+dataset: pdb_lmdb
 
 # Enable torch.compile for faster training
 compile: true

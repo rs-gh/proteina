@@ -8,6 +8,7 @@
 # without an express license agreement from NVIDIA CORPORATION or
 # its affiliates is strictly prohibited.
 
+import os
 import pathlib
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
@@ -467,6 +468,7 @@ class PDBLightningDataModule(BaseLightningDataModule):
             num_workers (int, optional): Number of workers used for dataloading. Defaults to 32.
             pin_memory (bool, optional): Whether memory should be pinned. Defaults to False.
         """
+        self.lmdb_dir = kwargs.pop("lmdb_dir", None)
         super().__init__(
             batch_padding=batch_padding,
             sampling_mode=sampling_mode,
@@ -748,15 +750,26 @@ class PDBLightningDataModule(BaseLightningDataModule):
                     f"No structures to download, all {len(pdb_codes)} structure files already present"
                 )
 
-    def _get_dataset(self, split: Literal["train", "val", "test"]) -> PDBDataset:
+    def _get_dataset(self, split: Literal["train", "val", "test"]):
         """Initialises a dataset for a given split.
 
         Args:
             split Literal["train", "val", "test"]: Split to initialise.
 
         Returns:
-            PDBCompDataset: initialised dataset for one split
+            Dataset for one split (ProteinLMDBDataset or PDBDataset).
         """
+        # Use LMDB if configured
+        if self.lmdb_dir is not None:
+            from proteinfoundation.datasets.lmdb_dataset import ProteinLMDBDataset
+
+            lmdb_path = os.path.join(self.lmdb_dir, f"{split}.lmdb")
+            logger.info(f"Using LMDB dataset: {lmdb_path}")
+            return ProteinLMDBDataset(
+                lmdb_path=lmdb_path,
+                transform=self.transform,
+            )
+
         df_split = self.dfs_splits[split]
         self.clusterid_to_seqid_mappings = self.clusterid_to_seqid_mappings
         pdb_codes = df_split["pdb"].tolist()

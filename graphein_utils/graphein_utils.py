@@ -1037,14 +1037,23 @@ def download_pdb_multiprocessing(
         strict=strict,
     )
     with Pool(processes=max_workers) as pool:
-        results = list(
-            tqdm(
-                pool.imap_unordered(func, pdb_codes, chunksize=chunksize),
-                total=len(pdb_codes),
-                desc="Downloading PDB files",
-                unit="file",
-            )
-        )
+        results = []
+        failed = 0
+        iterator = pool.imap_unordered(func, pdb_codes, chunksize=chunksize)
+        pbar = tqdm(total=len(pdb_codes), desc="Downloading PDB files", unit="file")
+        while True:
+            try:
+                result = next(iterator)
+                results.append(result)
+            except StopIteration:
+                break
+            except Exception as e:
+                failed += 1
+                log.warning(f"Download worker failed: {e}")
+            pbar.update(1)
+        pbar.close()
+        if failed:
+            log.warning(f"{failed}/{len(pdb_codes)} downloads failed")
     return results
 
 
@@ -1128,15 +1137,32 @@ def download_pdb(
     if os.path.exists(out_dir / f"{pdb_code}{extension}") and not overwrite:
         return out_dir / f"{pdb_code}{extension}"
 
-    # Download
-    try:
-        wget.download(
-            f"{BASE_URL}{pdb_code}{extension}",
-            out=str(out_dir / f"{pdb_code}{extension}"),
-            bar=None,
-        )
-    except HTTPError:
-        log.warning(f"PDB {pdb_code} not found.")
+    # Download with retry logic for transient network errors
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            wget.download(
+                f"{BASE_URL}{pdb_code}{extension}",
+                out=str(out_dir / f"{pdb_code}{extension}"),
+                bar=None,
+            )
+            break
+        except HTTPError:
+            log.warning(f"PDB {pdb_code} not found (HTTP error).")
+            break  # Not retryable
+        except Exception as e:
+            if attempt < max_retries - 1:
+                import time
+                wait = 2 ** attempt
+                log.warning(
+                    f"PDB {pdb_code} download failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                log.warning(
+                    f"PDB {pdb_code} download failed after {max_retries} attempts: {e}"
+                )
 
     # Check file exists
     if strict:

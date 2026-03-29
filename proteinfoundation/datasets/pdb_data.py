@@ -713,23 +713,26 @@ class PDBLightningDataModule(BaseLightningDataModule):
 
     def _download_structure_data(self, pdb_codes) -> None:
         if pdb_codes is not None:
-            to_download = (
-                pdb_codes
-                if self.overwrite
-                else [
+            if self.overwrite:
+                to_download = pdb_codes
+            else:
+                # Single listdir + set lookup instead of per-file stat()
+                # (591k stat() calls on Lustre takes 30+ min; listdir is ~1s)
+                logger.info(f"Scanning {self.raw_dir} for existing files...")
+                existing_files = set(os.listdir(self.raw_dir))
+                logger.info(f"Found {len(existing_files)} existing files")
+                fmt = self.format
+                to_download = [
                     pdb
                     for pdb in pdb_codes
-                    if not (
-                        (self.raw_dir / f"{pdb}.{self.format}").exists()
-                        or (self.raw_dir / f"{pdb}.{self.format}.gz").exists()
-                    )
+                    if f"{pdb}.{fmt}" not in existing_files
+                    and f"{pdb}.{fmt}.gz" not in existing_files
                 ]
-            )
             to_download = list(set(to_download))
             # Determine whether to download raw structures
             if to_download:
                 logger.info(
-                    f"Downloading {len(to_download)} structures to {self.processed_dir}"
+                    f"Downloading {len(to_download)} structures to {self.raw_dir}"
                 )
                 file_format = (
                     self.format[:-3] if self.format.endswith(".gz") else self.format

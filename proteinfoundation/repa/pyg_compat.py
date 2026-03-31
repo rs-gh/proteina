@@ -95,26 +95,29 @@ def _radius_graph_native(x, r, batch=None, loop=False, max_num_neighbors=32, flo
         mask = batch == b
         idx = mask.nonzero(as_tuple=True)[0]
         x_b = x[idx]
+        n = x_b.size(0)
+
+        # Skip empty or single-atom batch elements (no edges possible)
+        if n <= 1:
+            continue
 
         # Pairwise distances
         dists = torch.cdist(x_b.unsqueeze(0).float(), x_b.unsqueeze(0).float()).squeeze(0)
 
         # Mask: within radius, not self-loop (unless loop=True)
         valid = dists < r
-        if not loop and valid.size(0) > 1:
+        if not loop:
             valid.fill_diagonal_(False)
 
         # Enforce max_num_neighbors: for each node keep closest neighbors
-        if max_num_neighbors is not None:
+        if max_num_neighbors is not None and n > max_num_neighbors:
             # Set invalid distances to inf so they sort last
             dists_masked = dists.clone()
             dists_masked[~valid] = float("inf")
-            # For each row, keep only top-k closest
-            if dists_masked.size(1) > max_num_neighbors:
-                _, topk_idx = dists_masked.topk(max_num_neighbors, dim=1, largest=False)
-                new_valid = torch.zeros_like(valid)
-                new_valid.scatter_(1, topk_idx, True)
-                valid = valid & new_valid
+            _, topk_idx = dists_masked.topk(max_num_neighbors, dim=1, largest=False)
+            new_valid = torch.zeros_like(valid)
+            new_valid.scatter_(1, topk_idx, True)
+            valid = valid & new_valid
 
         src, dst = valid.nonzero(as_tuple=True)
 

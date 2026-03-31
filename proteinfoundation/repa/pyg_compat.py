@@ -95,13 +95,15 @@ def _radius_graph_native(x, r, batch=None, loop=False, max_num_neighbors=32, flo
         mask = batch == b
         idx = mask.nonzero(as_tuple=True)[0]
         x_b = x[idx]
+        if x_b.dim() == 1:
+            x_b = x_b.unsqueeze(-1)  # [n] -> [n, 1] for cdist
         n = x_b.size(0)
 
         # Skip empty or single-atom batch elements (no edges possible)
         if n <= 1:
             continue
 
-        # Pairwise distances
+        # Pairwise distances: cdist expects [B, P, M], returns [B, P, P]
         dists = torch.cdist(x_b.unsqueeze(0).float(), x_b.unsqueeze(0).float()).squeeze(0)
 
         # Mask: within radius, not self-loop (unless loop=True)

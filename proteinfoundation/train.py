@@ -299,5 +299,5 @@ if __name__ == "__main__":
         gradient_clip_val=1.0,
     )
     trainer.fit(
-        model, datamodule, ckpt_path=last_ckpt_path
+        model, datamodule, ckpt_path=last_ckpt_path, weights_only=False
     )  # If None then it starts from scratch

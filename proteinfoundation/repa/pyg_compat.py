@@ -101,7 +101,7 @@ def _radius_graph_native(x, r, batch=None, loop=False, max_num_neighbors=32, flo
 
         # Mask: within radius, not self-loop (unless loop=True)
         valid = dists < r
-        if not loop:
+        if not loop and valid.size(0) > 1:
             valid.fill_diagonal_(False)
 
         # Enforce max_num_neighbors: for each node keep closest neighbors

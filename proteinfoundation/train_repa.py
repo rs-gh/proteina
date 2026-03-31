@@ -17,6 +17,7 @@ sys.path.append(os.path.abspath(".."))
 # Must happen before any proteina imports.
 import proteinfoundation.repa.pyg_compat  # noqa: F401, E402
 
+
 import argparse
 import json
 import pickle
@@ -302,4 +303,4 @@ if __name__ == "__main__":
         gradient_clip_algorithm="norm",
         gradient_clip_val=1.0,
     )
-    trainer.fit(model, datamodule, ckpt_path=last_ckpt_path)
+    trainer.fit(model, datamodule, ckpt_path=last_ckpt_path, weights_only=False)

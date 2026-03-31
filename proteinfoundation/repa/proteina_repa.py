@@ -43,11 +43,13 @@ class ProteinaREPA(Proteina):
         # Create trainable projectors (one per aligned layer)
         projector_hidden = repa_cfg.get("projector_hidden_dim", cfg_exp.model.nn.token_dim)
         projector_nlayers = repa_cfg.get("projector_num_layers", 2)
+        token_dim = cfg_exp.model.nn.token_dim
         projectors = nn.ModuleList([
             Projector(
                 hidden_dim=projector_hidden,
                 encoder_dim=encoder.encoder_dim,
                 num_layers=projector_nlayers,
+                input_dim=token_dim,
             )
             for _ in repa_layers
         ])

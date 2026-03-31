@@ -191,11 +191,16 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
         )
         shuffle = False
         logger.info(f"Length of validation set: {len(self.val_ds)}")
+        # Force num_workers=0 for validation to avoid DataLoader worker
+        # segfaults on clusters where fork+CUDA interact badly.
+        saved = self.num_workers
+        self.num_workers = 0
         val_dl = self._get_dataloader(
             dataset=self.val_ds,
             shuffle=shuffle,
             clusterid_to_seqid_mapping=clusterid_to_seqid_mapping,
         )
+        self.num_workers = saved
         return val_dl
 
     def test_dataloader(self) -> DataLoader:

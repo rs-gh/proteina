@@ -12,15 +12,12 @@ if TYPE_CHECKING:
 
 
 class Projector(nn.Module):
-    """Trainable MLP that maps transformer hidden states to encoder space.
+    """Trainable MLP that maps transformer hidden states to encoder space."""
 
-    Uses LazyLinear for automatic input dimension inference (handles fused
-    hidden states or varying token dimensions without manual configuration).
-    """
-
-    def __init__(self, hidden_dim: int, encoder_dim: int, num_layers: int = 2):
+    def __init__(self, hidden_dim: int, encoder_dim: int, num_layers: int = 2, input_dim: int | None = None):
         super().__init__()
-        layers = [nn.LazyLinear(hidden_dim), nn.SiLU()]
+        first_linear = nn.LazyLinear(hidden_dim) if input_dim is None else nn.Linear(input_dim, hidden_dim)
+        layers = [first_linear, nn.SiLU()]
         for _ in range(num_layers - 2):
             layers.extend([nn.Linear(hidden_dim, hidden_dim), nn.SiLU()])
         layers.append(nn.Linear(hidden_dim, encoder_dim))

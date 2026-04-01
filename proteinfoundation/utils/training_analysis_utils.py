@@ -42,6 +42,9 @@ class LogEpochTimeCallback(Callback):
 
     def on_train_epoch_end(self, trainer, pl_module):
         curr_time = time.time()
+        if not hasattr(self, "epoch_start"):
+            # Resumed mid-epoch: on_train_epoch_start was never called
+            self.epoch_start = curr_time
         duration = curr_time - self.epoch_start
         pl_module.log(
             "train_info/epoch_duration_secs",

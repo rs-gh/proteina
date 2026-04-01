@@ -1,11 +1,12 @@
 datamodule:
   _target_: "proteinfoundation.datasets.pdb_data.PDBLightningDataModule"
   data_dir: ${oc.env:DATA_PATH}/pdb_train/
+  lmdb_dir: ${oc.env:LMDB_DIR}  # set by training script: local NVMe copy or Lustre fallback
   in_memory: False
   format: "cif"
   overwrite: False
   batch_padding: True
-  sampling_mode: "random"  # no MMseqs2 on CSD3 — use random sampling
+  sampling_mode: "random"
   transforms:
     - _target_: "proteinfoundation.datasets.transforms.GlobalRotationTransform"
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
@@ -15,14 +16,16 @@ datamodule:
   num_workers: 2  # spawn smoke test passed; 2 is sweet spot (no gain at 4)
   pin_memory: True
 
+  # dataselector is still needed for prepare_data (CSV generation),
+  # but LMDB path bypasses per-file loading in _get_dataset()
   dataselector:
     _target_: "proteinfoundation.datasets.pdb_data.PDBDataSelector"
     data_dir: ${oc.env:DATA_PATH}/pdb_train/
-    fraction: 1.0  # use full dataset
+    fraction: 1.0
     molecule_type: "protein"
     experiment_types: ["diffraction", "EM"]
     min_length: 50
-    max_length: 512  # ~88% of PDB protein chains (up from 58% at 256)
+    max_length: 512
     oligomeric_min: null
     oligomeric_max: null
     best_resolution: 0.0
@@ -37,6 +40,6 @@ datamodule:
     _target_: "proteinfoundation.datasets.pdb_data.PDBDataSplitter"
     data_dir: ${oc.env:DATA_PATH}/pdb_train/
     train_val_test: [0.98, 0.019, 0.001]
-    split_type: "random"  # no MMseqs2 available
+    split_type: "random"
     split_sequence_similarity: 0.5
     overwrite_sequence_clusters: False

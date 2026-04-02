@@ -6,6 +6,7 @@ run_name_: proteina_smoke_test_compile
 
 # Use compile-ready dataset (PaddingTransform for constant tensor shapes)
 dataset: pdb_smoke_test_compile
+dataset_config_subdir: pdb/smoke_test
 
 # Enable torch.compile
 compile: true

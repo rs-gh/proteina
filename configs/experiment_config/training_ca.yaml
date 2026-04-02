@@ -31,7 +31,7 @@ defaults:
 
 # Dataset params
 dataset: pdb_train
-dataset_config_subdir: pdb
+dataset_config_subdir: pdb/original
 
 force_precision_f32: False  # If false will use bf16-mixed precision
 

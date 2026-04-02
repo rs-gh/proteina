@@ -7,6 +7,7 @@ run_name_: proteina_60m_repa_v2
 
 # Full dataset via LMDB with reduced batch size for REPA (GearNet adds ~10GB)
 dataset: pdb_lmdb_repa
+dataset_config_subdir: pdb
 
 # Enable torch.compile for faster training
 compile: true

@@ -14,12 +14,12 @@ sampling_caflow:
   sampling_mode: sc
   sc_scale_noise: 0.45
 
-# Protein lengths and sample count (quick pass)
+# Protein lengths and sample count (full eval, extended to max training length)
 nres_lens:
 min_len: 60
-max_len: 255
-step_len: 5
-nsamples_per_len: 25
+max_len: 500
+step_len: 10
+nsamples_per_len: 125
 max_nsamples: 8
 
 # Eval mode

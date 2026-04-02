@@ -1,0 +1,10 @@
+defaults:
+  - inference_fid_60m_baseline
+  - _self_
+
+run_name_: eval_60m_smoke_test
+
+# Minimal generation for smoke test
+nres_lens: [50]
+nsamples_per_len: 2
+max_nsamples: 2

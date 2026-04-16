@@ -1,8 +1,1 @@
-defaults:
-  - inference_fid_60m_baseline
-  - _self_
-
-run_name_: eval_60m_repa_layer9_v2
-
-ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_repa_layer9_v2/checkpoints
-ckpt_name: last-EMA.ckpt
+inference/inference_fid_60m_repa_layer9.yaml

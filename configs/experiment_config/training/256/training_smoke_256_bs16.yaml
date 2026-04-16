@@ -1,0 +1,34 @@
+# @package _global_
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: smoke_256_bs16
+
+dataset: pdb_lmdb_256_bs16
+dataset_config_subdir: pdb
+
+compile: true
+
+log:
+  wandb_project: proteina-repa
+  log_wandb: false
+  checkpoint: false
+
+ema:
+  decay: 0
+  validate_original_weights: True
+
+opt:
+  val_check_interval: 9999999
+  max_epochs: 1
+
+# REPA config to test the heavier (worst-case) memory footprint
+repa:
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  projector_hidden_dim: 512
+  projector_num_layers: 3

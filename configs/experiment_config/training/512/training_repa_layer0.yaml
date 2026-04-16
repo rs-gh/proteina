@@ -1,0 +1,41 @@
+# @package _global_
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_layer0_v2
+
+# Full dataset via LMDB with reduced batch size for REPA (GearNet adds ~10GB)
+dataset: pdb_lmdb_repa
+dataset_config_subdir: pdb
+
+# Enable torch.compile for faster training
+compile: true
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+
+ema:
+  validate_original_weights: True
+
+# Generation quality evaluation during training
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+
+# REPA (Representation Alignment) configuration
+repa:
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [0]                   # Align first transformer layer
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  projector_hidden_dim: 512
+  projector_num_layers: 3

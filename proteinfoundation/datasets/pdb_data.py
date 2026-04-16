@@ -469,6 +469,7 @@ class PDBLightningDataModule(BaseLightningDataModule):
             pin_memory (bool, optional): Whether memory should be pinned. Defaults to False.
         """
         self.lmdb_dir = kwargs.pop("lmdb_dir", None)
+        self.lmdb_max_num_residues = kwargs.pop("lmdb_max_num_residues", None)
         super().__init__(
             batch_padding=batch_padding,
             sampling_mode=sampling_mode,
@@ -499,6 +500,10 @@ class PDBLightningDataModule(BaseLightningDataModule):
         self.file_names = None
 
     def prepare_data(self):
+        if self.lmdb_dir is not None:
+            logger.info("Using LMDB — skipping prepare_data (CSV/processing not needed)")
+            return
+
         if self.dataselector:
             file_identifier = self._get_file_identifier(self.dataselector)
             df_data_name = f"{file_identifier}.csv"
@@ -586,6 +591,15 @@ class PDBLightningDataModule(BaseLightningDataModule):
         Args:
             stage (Optional[str], optional): Which dataset should be created (train, val or test). Defaults to None.
         """
+        if self.lmdb_dir is not None:
+            # LMDB path: datasets handle their own key lists, no CSV needed
+            if stage == "fit" or stage is None:
+                self.train_ds = self.train_dataset()
+                self.val_ds = self.val_dataset()
+            elif stage == "test":
+                self.test_ds = self.test_dataset()
+            return
+
         # load dataframe with metadata from disk
         if not self.df_data:
             if self.dataselector:
@@ -771,6 +785,7 @@ class PDBLightningDataModule(BaseLightningDataModule):
             return ProteinLMDBDataset(
                 lmdb_path=lmdb_path,
                 transform=self.transform,
+                max_num_residues=self.lmdb_max_num_residues,
             )
 
         df_split = self.dfs_splits[split]

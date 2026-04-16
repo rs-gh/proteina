@@ -146,24 +146,11 @@ def convert_outputs_to_pdb(outputs) -> List[str]:
     return pdbs
 
 
-def run_and_store_esm(
-    name: str,
-    seqs: List[str],
-    path_to_esmfold_out: str,
-) -> List[str]:
-    """
-    Runs ESMFold and stores results as PDB files.
-
-    For now, runs with a single GPU, though not a big deal if we parallelie jobs (easily
-    done with our inference pipeline).
-
-    Args:
-        name: name to use when storing
-        seqs: List of sequences (strings)
-        path_to_esmfold_out: Root directory to store outputs of ESMFold as PDBs
+def load_esmfold():
+    """Load ESMFold model and tokenizer.
 
     Returns:
-        List of paths (list of str) to PDB files
+        (esm_model, tokenizer) tuple. Model is on CUDA.
     """
     is_cluster_run = os.environ.get("SLURM_JOB_ID") is not None
     cache_dir = None
@@ -176,6 +163,34 @@ def run_and_store_esm(
         "facebook/esmfold_v1", cache_dir=cache_dir
     )
     esm_model = esm_model.cuda()
+    return esm_model, tokenizer
+
+
+def run_and_store_esm(
+    name: str,
+    seqs: List[str],
+    path_to_esmfold_out: str,
+    esm_model=None,
+    tokenizer=None,
+) -> List[str]:
+    """
+    Runs ESMFold and stores results as PDB files.
+
+    For now, runs with a single GPU, though not a big deal if we parallelie jobs (easily
+    done with our inference pipeline).
+
+    Args:
+        name: name to use when storing
+        seqs: List of sequences (strings)
+        path_to_esmfold_out: Root directory to store outputs of ESMFold as PDBs
+        esm_model: Pre-loaded ESMFold model (optional, loads if None)
+        tokenizer: Pre-loaded tokenizer (optional, loads if None)
+
+    Returns:
+        List of paths (list of str) to PDB files
+    """
+    if esm_model is None or tokenizer is None:
+        esm_model, tokenizer = load_esmfold()
 
     # Run ESMFold
     len(seqs)
@@ -340,3 +355,101 @@ def scRMSD(
     if ret_min:
         return min(results)
     return results
+
+
+def batch_designability(
+    pdb_paths: List[str],
+    tmp_root: str = "./tmp/metrics/",
+    num_seq_per_target: int = 8,
+    pmpnn_sampling_temp: float = 0.1,
+) -> dict:
+    """Compute designability metrics for a batch of PDB files.
+
+    Shares a single ESMFold model across all proteins for efficiency.
+
+    Args:
+        pdb_paths: List of paths to generated PDB files.
+        tmp_root: Root directory for temporary files.
+        num_seq_per_target: Number of ProteinMPNN sequences per structure.
+        pmpnn_sampling_temp: ProteinMPNN sampling temperature.
+
+    Returns:
+        Dict with keys:
+            scRMSD_list: Per-protein best scRMSD values.
+            tm_score_list: Per-protein best TM-scores.
+            scRMSD_mean, scRMSD_median: Aggregate RMSD stats.
+            tm_score_mean: Aggregate TM-score stat.
+            designability_rate: Fraction with scRMSD < 2.0 Angstrom.
+    """
+    from proteinfoundation.metrics.tm_score import compute_tm_score
+
+    esm_model, tokenizer = load_esmfold()
+
+    scRMSD_list = []
+    tm_score_list = []
+
+    for pdb_path in pdb_paths:
+        name = pdb_name_from_path(pdb_path)
+        tmp_path = os.path.join(tmp_root, name)
+        os.makedirs(tmp_path, exist_ok=True)
+
+        try:
+            # ProteinMPNN: generate sequences
+            mpnn_seqs = run_proteinmpnn(
+                pdb_path, tmp_path,
+                num_seq_per_target=num_seq_per_target,
+                sampling_temp=pmpnn_sampling_temp,
+            )
+
+            # ESMFold: fold sequences (reuse loaded model)
+            esm_paths = run_and_store_esm(
+                name, mpnn_seqs, tmp_path,
+                esm_model=esm_model, tokenizer=tokenizer,
+            )
+
+            # Compute RMSD and TM-score for each refolded structure
+            gen_prot = load_pdb(pdb_path)
+            gen_coors = torch.Tensor(gen_prot.atom_positions)
+
+            best_rmsd = float("inf")
+            best_tm = 0.0
+
+            for esm_path in esm_paths:
+                rec_prot = load_pdb(esm_path)
+                rec_coors = torch.Tensor(rec_prot.atom_positions)
+
+                # RMSD
+                n_common = min(len(gen_coors), len(rec_coors))
+                rmsd = rmsd_metric(gen_coors[:n_common], rec_coors[:n_common])
+                best_rmsd = min(best_rmsd, rmsd)
+
+                # TM-score
+                tm = compute_tm_score(
+                    gen_coors[:n_common].numpy(),
+                    rec_coors[:n_common].numpy(),
+                )
+                best_tm = max(best_tm, tm)
+
+            scRMSD_list.append(best_rmsd)
+            tm_score_list.append(best_tm)
+
+        except Exception as e:
+            logger.warning(f"Designability failed for {pdb_path}: {e}")
+            continue
+
+    # Cleanup ESMFold
+    del esm_model, tokenizer
+    torch.cuda.empty_cache()
+
+    import numpy as np
+    scRMSD_arr = np.array(scRMSD_list)
+    tm_arr = np.array(tm_score_list)
+
+    return {
+        "scRMSD_list": scRMSD_list,
+        "tm_score_list": tm_score_list,
+        "scRMSD_mean": float(scRMSD_arr.mean()) if len(scRMSD_arr) > 0 else float("nan"),
+        "scRMSD_median": float(np.median(scRMSD_arr)) if len(scRMSD_arr) > 0 else float("nan"),
+        "tm_score_mean": float(tm_arr.mean()) if len(tm_arr) > 0 else float("nan"),
+        "designability_rate": float((scRMSD_arr < 2.0).mean()) if len(scRMSD_arr) > 0 else float("nan"),
+    }

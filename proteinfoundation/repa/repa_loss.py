@@ -49,6 +49,7 @@ class ProteinaREPALoss(nn.Module):
         lambda_repa: float = 0.5,
         combination_mode: str = "additive",
         similarity_type: str = "cosine",
+        averaging: str = "per_sample",
     ):
         """
         Args:
@@ -58,19 +59,62 @@ class ProteinaREPALoss(nn.Module):
             lambda_repa: REPA loss weight.
             combination_mode: "additive" (fm + λ*repa) or "tradeoff" ((1-λ)*fm + λ*repa).
             similarity_type: "cosine" or "mse".
+            averaging: "per_sample" (paper default — each protein contributes equally)
+                or "per_residue" (global mean over all unmasked residues).
         """
         super().__init__()
+        if averaging not in ("per_sample", "per_residue"):
+            raise ValueError(f"averaging must be 'per_sample' or 'per_residue', got '{averaging}'")
         self.encoder = encoder
         self.projectors = projectors
         self.repa_layers = repa_layers
         self.lambda_repa = lambda_repa
         self.combination_mode = combination_mode
         self.similarity_type = similarity_type
+        self.averaging = averaging
 
         assert len(projectors) == len(repa_layers), (
             f"Need one projector per aligned layer, got {len(projectors)} projectors "
             f"for {len(repa_layers)} layers"
         )
+
+    def _cosine_loss(self, projected, target_repr, real_mask):
+        """Compute negative cosine similarity loss with the configured averaging."""
+        if self.averaging == "per_sample":
+            # Paper-style: mean per sample, then mean over batch.
+            # Each protein contributes equally regardless of length.
+            b = projected.shape[0]
+            per_sample_sims = []
+            for b_idx in range(b):
+                m = real_mask[b_idx]
+                if m.any():
+                    cs = F.cosine_similarity(
+                        projected[b_idx, m], target_repr[b_idx, m], dim=-1
+                    )
+                    per_sample_sims.append(cs.mean())
+            mean_cos_sim = torch.stack(per_sample_sims).mean()
+            return -mean_cos_sim, mean_cos_sim
+        else:
+            # per_residue: global mean over all unmasked tokens.
+            cos_sim = F.cosine_similarity(
+                projected[real_mask], target_repr[real_mask], dim=-1
+            )
+            return -cos_sim.mean(), cos_sim.mean()
+
+    def _mse_loss(self, projected, target_repr, real_mask):
+        """Compute MSE loss with the configured averaging."""
+        if self.averaging == "per_sample":
+            b = projected.shape[0]
+            per_sample_losses = []
+            for b_idx in range(b):
+                m = real_mask[b_idx]
+                if m.any():
+                    per_sample_losses.append(
+                        F.mse_loss(projected[b_idx, m], target_repr[b_idx, m])
+                    )
+            return torch.stack(per_sample_losses).mean()
+        else:
+            return F.mse_loss(projected[real_mask], target_repr[real_mask])
 
     def forward(self, hidden_states, x_1_nm, mask):
         """Compute REPA alignment loss.
@@ -95,15 +139,12 @@ class ProteinaREPALoss(nn.Module):
             projected = projector(h)  # [b, n, encoder_dim]
 
             if self.similarity_type == "cosine":
-                cos_sim = F.cosine_similarity(
-                    projected[real_mask], target_repr[real_mask], dim=-1
+                layer_loss, mean_cos_sim = self._cosine_loss(
+                    projected, target_repr, real_mask
                 )
-                layer_loss = -cos_sim.mean()
-                stats[f"repa/cos_sim_layer_{self.repa_layers[i]}"] = cos_sim.mean().detach()
+                stats[f"repa/cos_sim_layer_{self.repa_layers[i]}"] = mean_cos_sim.detach()
             else:
-                layer_loss = F.mse_loss(
-                    projected[real_mask], target_repr[real_mask]
-                )
+                layer_loss = self._mse_loss(projected, target_repr, real_mask)
                 stats[f"repa/mse_layer_{self.repa_layers[i]}"] = layer_loss.detach()
 
             total_loss = total_loss + layer_loss

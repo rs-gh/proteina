@@ -62,6 +62,7 @@ class ProteinaREPA(Proteina):
             lambda_repa=repa_cfg.lambda_repa,
             combination_mode=repa_cfg.get("combination_mode", "additive"),
             similarity_type=repa_cfg.get("similarity_type", "cosine"),
+            averaging=repa_cfg.get("averaging", "per_sample"),
         )
 
         # Update param count (exclude frozen encoder)
@@ -162,15 +163,14 @@ class ProteinaREPA(Proteina):
             else:  # additive
                 train_loss = train_loss + lam * repa_loss
 
-            # Log REPA stats
-            if not val_step:
-                for key, value in repa_stats.items():
-                    self.log(
-                        key, value,
-                        on_step=True, on_epoch=True, prog_bar=False,
-                        logger=True, batch_size=mask.shape[0],
-                        sync_dist=True, add_dataloader_idx=False,
-                    )
+            # Log REPA stats (prefixed for train vs validation)
+            for key, value in repa_stats.items():
+                self.log(
+                    f"{log_prefix}/{key}", value,
+                    on_step=True, on_epoch=True, prog_bar=False,
+                    logger=True, batch_size=mask.shape[0],
+                    sync_dist=True, add_dataloader_idx=False,
+                )
 
         # Standard logging
         self.log(

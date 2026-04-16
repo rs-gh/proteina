@@ -103,6 +103,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Shows progress bar as training progresses.",
     )
+    parser.add_argument(
+        "--config_subdir",
+        type=str,
+        default=None,
+        help="Subdirectory under experiment_config/ (e.g. 'training/256').",
+    )
     args = parser.parse_args()
 
     logger.add(
@@ -114,8 +120,9 @@ if __name__ == "__main__":
 
     # Load experiment config
     config_path = "../configs/experiment_config"
+    config_name = f"{args.config_subdir}/{args.config_name}" if args.config_subdir else args.config_name
     with hydra.initialize(config_path, version_base=hydra.__version__):
-        cfg_exp = hydra.compose(config_name=args.config_name)
+        cfg_exp = hydra.compose(config_name=config_name)
         if args.single:
             cfg_exp.hardware.ngpus_per_node_ = 1
             cfg_exp.hardware.nnodes_ = 1
@@ -255,6 +262,14 @@ if __name__ == "__main__":
         callbacks.append(GradAndWeightAnalysisCallback())
     if cfg_exp.opt.skip_nan_grad:
         callbacks.append(SkipNanGradCallback())
+
+    # Generation quality evaluation callback
+    eval_cb_cfg = cfg_exp.get("eval_callback")
+    if eval_cb_cfg is not None and eval_cb_cfg.get("enabled", False):
+        from proteinfoundation.callbacks.generation_metrics import ProteinGenerationMetricsCallback
+        eval_cb_kwargs = {k: v for k, v in eval_cb_cfg.items() if k != "enabled"}
+        callbacks.append(ProteinGenerationMetricsCallback(**eval_cb_kwargs))
+        log_info(f"Generation metrics callback enabled (every {eval_cb_cfg.get('compute_every_n_steps', '?')} steps)")
 
     # === KEY CHANGE: Use ProteinaREPA if repa config is present ===
     use_repa = cfg_exp.get("repa") is not None

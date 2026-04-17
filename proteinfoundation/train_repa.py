@@ -207,7 +207,6 @@ if __name__ == "__main__":
         from datetime import datetime
 
         display_name = f"{datetime.now().strftime('%m%d-%H%M')}-{run_name}"
-        resuming = last_ckpt_path is not None
         # Log LMDB source (nvme vs lustre) for storage performance comparison
         lmdb_dir = os.environ.get("LMDB_DIR", "unknown")
         lmdb_source = "nvme" if "/tmp/" in lmdb_dir else "lustre"
@@ -216,7 +215,7 @@ if __name__ == "__main__":
             project=cfg_exp.log.wandb_project,
             id=run_name,
             name=display_name,
-            resume="must" if resuming else "allow",
+            resume="allow",
             tags=[f"lmdb_{lmdb_source}"],
         )
         callbacks.append(LogEpochTimeCallback())

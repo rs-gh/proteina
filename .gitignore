@@ -25,3 +25,5 @@ tmp/*
 *.fasta
 inference/*store
 proteinfoundation/store
+proteinfoundation/inference/*
+!proteinfoundation/inference/README.md

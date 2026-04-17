@@ -5,7 +5,7 @@ defaults:
 
 run_name_: proteina_60m_baseline_v2
 
-# Full dataset via LMDB (run convert_to_lmdb.sh first)
+# Full dataset via LMDB (run hpc-scripts/proteina/data_prep/convert_to_lmdb.sh first)
 dataset: pdb_lmdb
 dataset_config_subdir: pdb
 

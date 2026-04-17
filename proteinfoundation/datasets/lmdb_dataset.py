@@ -28,7 +28,7 @@ class ProteinLMDBDataset(Dataset):
     (PDB -> OpenFold) should be applied during LMDB creation, not here.
 
     Supports optional max_num_residues filtering using a precomputed
-    length index (built by build_lmdb_length_index.py). If no index
+    length index (built by hpc-scripts/proteina/data_prep/build_lmdb_length_index.py). If no index
     exists, falls back to scanning the LMDB on first connect.
 
     Args:
@@ -109,7 +109,7 @@ class ProteinLMDBDataset(Dataset):
         else:
             logger.warning(
                 f"Length index not found at {lengths_path}. "
-                f"Scanning LMDB to filter (run build_lmdb_length_index.py to speed this up)."
+                f"Scanning LMDB to filter (run hpc-scripts/proteina/data_prep/build_lmdb_length_index.py to speed this up)."
             )
             return self._scan_and_filter()
 

@@ -62,7 +62,7 @@ class ProteinaREPA(Proteina):
             lambda_repa=repa_cfg.lambda_repa,
             combination_mode=repa_cfg.get("combination_mode", "additive"),
             similarity_type=repa_cfg.get("similarity_type", "cosine"),
-            averaging=repa_cfg.get("averaging", "per_sample"),
+            averaging=repa_cfg.get("averaging", "per_residue"),
         )
 
         # Update param count (exclude frozen encoder)

@@ -37,5 +37,6 @@ repa:
   lambda_repa: 0.5
   combination_mode: additive
   similarity_type: cosine
+  averaging: per_residue
   projector_hidden_dim: 512
-  projector_num_layers: 3
+  projector_num_layers: 2  # TODO: reference REPA uses 3 — confirm intent before launching

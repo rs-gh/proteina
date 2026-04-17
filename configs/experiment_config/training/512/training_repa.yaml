@@ -38,5 +38,6 @@ repa:
   lambda_repa: 0.5              # REPA loss weight
   combination_mode: additive    # "additive" (fm + λ*repa) or "tradeoff" ((1-λ)*fm + λ*repa)
   similarity_type: cosine       # "cosine" or "mse"
+  averaging: per_residue        # "per_residue" (project default) or "per_sample" (each protein weighted equally)
   projector_hidden_dim: 512     # Projector MLP intermediate dimension
-  projector_num_layers: 3       # Number of projector MLP layers
+  projector_num_layers: 2  # TODO: reference REPA uses 3 — confirm intent before launching

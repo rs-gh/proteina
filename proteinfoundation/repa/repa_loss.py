@@ -49,7 +49,7 @@ class ProteinaREPALoss(nn.Module):
         lambda_repa: float = 0.5,
         combination_mode: str = "additive",
         similarity_type: str = "cosine",
-        averaging: str = "per_sample",
+        averaging: str = "per_residue",
     ):
         """
         Args:
@@ -59,8 +59,11 @@ class ProteinaREPALoss(nn.Module):
             lambda_repa: REPA loss weight.
             combination_mode: "additive" (fm + λ*repa) or "tradeoff" ((1-λ)*fm + λ*repa).
             similarity_type: "cosine" or "mse".
-            averaging: "per_sample" (paper default — each protein contributes equally)
-                or "per_residue" (global mean over all unmasked residues).
+            averaging: "per_residue" (project default — global mean over all unmasked residues)
+                or "per_sample" (each protein contributes equally regardless of length).
+                Note: the reference REPA paper averages per-patch, which equals per-sample only
+                when every image has the same number of patches. In variable-length domains the
+                two diverge; the paper gives no guidance on which to prefer.
         """
         super().__init__()
         if averaging not in ("per_sample", "per_residue"):

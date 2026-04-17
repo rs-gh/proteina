@@ -63,13 +63,21 @@ class ProteinGenerationMetricsCallback(Callback):
         self.sc_scale_score = sc_scale_score
         self.schedule_mode = schedule_mode
         self.schedule_p = schedule_p
-        self.next_compute_step = compute_every_n_steps
+        # Lazy-init in on_train_batch_end so we can align to the resumed
+        # global_step. Without this, resume-from-step-N with N >> compute_every_n_steps
+        # would trigger the callback on every batch until next_compute_step caught up
+        # (re-generating metrics already logged in the prior run).
+        self.next_compute_step = None
 
     def on_train_batch_end(
         self, trainer: L.Trainer, pl_module: L.LightningModule, *args, **kwargs
     ) -> None:
         if trainer.global_rank != 0:
             return
+        if self.next_compute_step is None:
+            self.next_compute_step = (
+                (trainer.global_step // self.compute_every_n_steps) + 1
+            ) * self.compute_every_n_steps
         if trainer.global_step < self.next_compute_step:
             return
         self.next_compute_step += self.compute_every_n_steps

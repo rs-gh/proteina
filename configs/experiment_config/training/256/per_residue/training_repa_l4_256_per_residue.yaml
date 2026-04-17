@@ -3,7 +3,7 @@ defaults:
   - /training_ca
   - _self_
 
-run_name_: proteina_60m_repa_l0_256
+run_name_: proteina_60m_repa_l4_256_per_residue
 
 dataset: pdb_lmdb_256
 dataset_config_subdir: pdb
@@ -20,10 +20,11 @@ ema:
 
 repa:
   gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
-  layers: [0]
+  layers: [4]
   lambda_repa: 0.5
   combination_mode: additive
   similarity_type: cosine
+  averaging: per_residue
   projector_hidden_dim: 512
   projector_num_layers: 2
 

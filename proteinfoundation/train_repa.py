@@ -211,12 +211,23 @@ if __name__ == "__main__":
         lmdb_dir = os.environ.get("LMDB_DIR", "unknown")
         lmdb_source = "nvme" if "/tmp/" in lmdb_dir else "lustre"
 
+        # Derive encoder type for WandB tag + group — mirrors the resolution
+        # order used by _build_encoder() so the tag matches what's instantiated.
+        repa_cfg = cfg_exp.get("repa")
+        if repa_cfg is None:
+            encoder_type = "baseline"
+        elif repa_cfg.get("encoder") is not None:
+            encoder_type = repa_cfg.encoder.type
+        else:
+            encoder_type = "gearnet"  # legacy (flat repa.gearnet_ckpt_path) → gearnet
+
         wandb_logger = WandbLogger(
             project=cfg_exp.log.wandb_project,
             id=run_name,
             name=display_name,
             resume="allow",
-            tags=[f"lmdb_{lmdb_source}"],
+            tags=[f"lmdb_{lmdb_source}", f"encoder_{encoder_type}"],
+            group=f"encoder_{encoder_type}",
         )
         callbacks.append(LogEpochTimeCallback())
         callbacks.append(LogSetpTimeCallback())

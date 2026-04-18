@@ -25,7 +25,9 @@ opt:
 
 # REPA config to test the heavier (worst-case) memory footprint
 repa:
-  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
   layers: [4]
   lambda_repa: 0.5
   combination_mode: additive

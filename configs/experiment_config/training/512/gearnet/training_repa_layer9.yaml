@@ -32,7 +32,9 @@ eval_callback:
 
 # REPA (Representation Alignment) configuration
 repa:
-  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
   layers: [9]                   # Align last transformer layer (0-indexed, 10 layers)
   lambda_repa: 0.5
   combination_mode: additive

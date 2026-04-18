@@ -5,10 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from proteinfoundation.repa.gearnet_encoder import GearNetPerResidueEncoder
+from typing import List
 
 
 class Projector(nn.Module):
@@ -43,7 +40,7 @@ class ProteinaREPALoss(nn.Module):
 
     def __init__(
         self,
-        encoder: GearNetPerResidueEncoder,
+        encoder: nn.Module,
         projectors: nn.ModuleList,
         repa_layers: List[int],
         lambda_repa: float = 0.5,
@@ -53,7 +50,11 @@ class ProteinaREPALoss(nn.Module):
     ):
         """
         Args:
-            encoder: Frozen GearNet encoder producing per-residue features.
+            encoder: Frozen per-residue encoder. Must expose an attribute
+                ``encoder_dim: int`` and call signature
+                ``forward(ca_coords_nm, mask, residue_type=None) -> [B, N, encoder_dim]``.
+                Structure-based encoders (GearNet) ignore ``residue_type``;
+                sequence-based encoders (ESM) ignore ``ca_coords_nm``.
             projectors: One projector per aligned layer (trainable).
             repa_layers: Which transformer layers are being aligned.
             lambda_repa: REPA loss weight.
@@ -119,20 +120,23 @@ class ProteinaREPALoss(nn.Module):
         else:
             return F.mse_loss(projected[real_mask], target_repr[real_mask])
 
-    def forward(self, hidden_states, x_1_nm, mask):
+    def forward(self, hidden_states, x_1_nm, mask, residue_type=None):
         """Compute REPA alignment loss.
 
         Args:
             hidden_states: List of [b, n, token_dim] from specified transformer layers.
             x_1_nm: [b, n, 3] clean CA coordinates in nm.
             mask: [b, n] boolean residue mask.
+            residue_type: Optional [b, n] long tensor of amino-acid indices (0..20;
+                padded positions may be -1 — encoders handle padding via ``mask``).
+                Required by sequence-based encoders (ESM), ignored by others.
 
         Returns:
             repa_loss: Scalar tensor (negative mean cosine similarity or MSE).
             stats: Dict with per-layer losses for logging.
         """
         # Get target representations from frozen encoder
-        target_repr = self.encoder(x_1_nm, mask)  # [b, n, encoder_dim]
+        target_repr = self.encoder(x_1_nm, mask, residue_type=residue_type)  # [b, n, encoder_dim]
         real_mask = mask.bool()  # [b, n]
 
         total_loss = torch.tensor(0.0, device=x_1_nm.device)

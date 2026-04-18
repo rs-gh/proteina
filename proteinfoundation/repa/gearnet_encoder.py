@@ -93,12 +93,13 @@ class GearNetPerResidueEncoder(nn.Module):
         return output
 
     @torch.no_grad()
-    def forward(self, ca_coords_nm, mask):
+    def forward(self, ca_coords_nm, mask, residue_type=None):
         """Compute per-residue GearNet features.
 
         Args:
             ca_coords_nm: [b, n, 3] CA coordinates in nanometers
             mask: [b, n] boolean residue mask
+            residue_type: unused (signature-parity with sequence-based encoders)
 
         Returns:
             per_residue_features: [b, n, encoder_dim] (masked positions are zero)

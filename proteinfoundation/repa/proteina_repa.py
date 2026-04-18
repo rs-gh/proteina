@@ -15,6 +15,31 @@ from proteinfoundation.repa.repa_loss import Projector, ProteinaREPALoss
 from proteinfoundation.utils.ff_utils.pdb_utils import mask_cath_code_by_level
 
 
+def _build_encoder(repa_cfg) -> nn.Module:
+    """Instantiate the frozen REPA target encoder from config.
+
+    Supports ``repa.encoder.type ∈ {"gearnet", "esm"}``. Falls back to the
+    legacy ``repa.gearnet_ckpt_path`` schema (pre-pluggable-encoder) so
+    existing training YAMLs keep working without edits.
+    """
+    encoder_cfg = repa_cfg.get("encoder", None)
+    if encoder_cfg is None:
+        # Legacy path: only gearnet_ckpt_path at the top of repa_cfg.
+        return GearNetPerResidueEncoder(ckpt_path=repa_cfg.gearnet_ckpt_path)
+
+    enc_type = encoder_cfg.type
+    if enc_type == "gearnet":
+        return GearNetPerResidueEncoder(ckpt_path=encoder_cfg.gearnet_ckpt_path)
+    if enc_type == "esm":
+        from proteinfoundation.repa.esm_encoder import ESMPerResidueEncoder
+
+        return ESMPerResidueEncoder(
+            model_id=encoder_cfg.get("model_id", "facebook/esm2_t33_650M_UR50D"),
+            layer=encoder_cfg.get("layer", None),
+        )
+    raise ValueError(f"Unknown repa.encoder.type: {enc_type!r}")
+
+
 class ProteinaREPA(Proteina):
     """Proteina with REPA alignment to a frozen GearNet encoder.
 
@@ -38,7 +63,7 @@ class ProteinaREPA(Proteina):
         )
 
         # Create frozen encoder
-        encoder = GearNetPerResidueEncoder(ckpt_path=repa_cfg.gearnet_ckpt_path)
+        encoder = _build_encoder(repa_cfg)
 
         # Create trainable projectors (one per aligned layer)
         projector_hidden = repa_cfg.get("projector_hidden_dim", cfg_exp.model.nn.token_dim)
@@ -154,7 +179,10 @@ class ProteinaREPA(Proteina):
         # REPA loss
         hidden_states = nn_out.get("hidden_states", [])
         if hidden_states:
-            repa_loss, repa_stats = self.repa_loss(hidden_states, x_1, mask)
+            residue_type = batch.residue_type if "residue_type" in batch else None
+            repa_loss, repa_stats = self.repa_loss(
+                hidden_states, x_1, mask, residue_type=residue_type
+            )
 
             # Combine with FM loss
             lam = self.repa_loss.lambda_repa

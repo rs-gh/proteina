@@ -123,6 +123,19 @@ class PairBiasAttention(nn.Module):
             )
             attn_bias = attn_bias + mask_bias if exists(attn_bias) else mask_bias
 
+        # Fused SDPA kernels (FLASH / EFFICIENT) require stride(-1) == 1 on
+        # attn_mask. The upstream rearrange("b ... h -> b h ...") leaves the
+        # last dim with stride = H; .contiguous() materializes a fresh buffer
+        # matching the (B, H, N, N) logical layout so EFFICIENT_ATTENTION
+        # dispatches instead of falling back to MATH.
+        # Validated 2026-04-18 via hpc-scripts/proteina/bench/diagnose_sdpa.py:
+        # MATH(strided) vs EFFICIENT(contiguous) on identical inputs agree to
+        # worst 5.0e-3 relative (below bf16 eps ~7.8e-3) across out/gq/gk/gv/gb.
+        # Timing at B=6,H=8,N=512,D=64,bf16: 2.11 ms (MATH) -> 0.51 ms (EFFICIENT),
+        # ~4x speedup for this attention call.
+        if attn_bias is not None:
+            attn_bias = attn_bias.contiguous()
+
         return torch.nn.functional.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_bias, scale=self.scale,
         )

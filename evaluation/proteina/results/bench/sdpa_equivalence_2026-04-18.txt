@@ -1,0 +1,53 @@
+=== NODE: gpu-q-26 ===
+=== GPU: NVIDIA A100-SXM4-80GB, 81920 MiB ===
+
+torch: 2.9.1+cu128
+cuda:  12.8
+device: NVIDIA A100-SXM4-80GB
+shapes: B=6 H=8 N=512 D=64 dtype=torch.bfloat16
+flash_enabled=True mem_eff_enabled=True math_enabled=True
+
+─── A: proteina-like (strided bias via rearrange, requires_grad) ───
+  bias: shape=(6, 8, 512, 512) dtype=torch.bfloat16 contiguous=False requires_grad=True
+  FLASH_ATTENTION                      fwd+bwd  FAIL   No available kernel. Aborting execution.
+  EFFICIENT_ATTENTION                  fwd+bwd  FAIL   No available kernel. Aborting execution.
+  MATH                                 fwd+bwd  OK       2.11 ms/iter
+  CUDNN_ATTENTION                      fwd+bwd  FAIL   No available kernel. Aborting execution.
+
+─── B: contiguous bias, requires_grad ───
+  bias: shape=(6, 8, 512, 512) dtype=torch.bfloat16 contiguous=True requires_grad=True
+  FLASH_ATTENTION                      fwd+bwd  FAIL   No available kernel. Aborting execution.
+  EFFICIENT_ATTENTION                  fwd+bwd  OK       0.52 ms/iter
+  MATH                                 fwd+bwd  OK       2.06 ms/iter
+  CUDNN_ATTENTION                      fwd+bwd  FAIL   No available kernel. Aborting execution.
+
+─── C: contiguous bias, detached (no grad) ───
+  bias: shape=(6, 8, 512, 512) dtype=torch.bfloat16 contiguous=True requires_grad=False
+  FLASH_ATTENTION                      fwd+bwd  FAIL   No available kernel. Aborting execution.
+  EFFICIENT_ATTENTION                  fwd+bwd  OK       0.44 ms/iter
+  MATH                                 fwd+bwd  OK       1.96 ms/iter
+  CUDNN_ATTENTION                      fwd+bwd  OK       0.39 ms/iter
+
+─── D: strided bias, requires_grad, FORWARD ONLY ───
+  bias: shape=(6, 8, 512, 512) dtype=torch.bfloat16 contiguous=False requires_grad=True
+  FLASH_ATTENTION                      fwd      FAIL   No available kernel. Aborting execution.
+  EFFICIENT_ATTENTION                  fwd      FAIL   No available kernel. Aborting execution.
+  MATH                                 fwd      OK       0.83 ms/iter
+  CUDNN_ATTENTION                      fwd      FAIL   No available kernel. Aborting execution.
+
+─── E: baseline — no bias ───
+  FLASH_ATTENTION                      fwd+bwd  OK       0.28 ms/iter
+  EFFICIENT_ATTENTION                  fwd+bwd  OK       0.39 ms/iter
+  MATH                                 fwd+bwd  OK       1.87 ms/iter
+  CUDNN_ATTENTION                      fwd+bwd  OK       0.31 ms/iter
+
+─── F: numerical equivalence (MATH strided vs EFFICIENT contiguous, same inputs) ───
+  out   max_abs=3.906e-03  mean_abs=1.060e-04  rel_max=2.959e-03  ref_max=1.320e+00
+  gq    max_abs=7.812e-03  mean_abs=1.921e-04  rel_max=4.762e-03  ref_max=1.641e+00
+  gk    max_abs=1.562e-02  mean_abs=1.575e-04  rel_max=5.000e-03  ref_max=3.125e+00
+  gv    max_abs=7.812e-03  mean_abs=1.418e-04  rel_max=4.149e-03  ref_max=1.883e+00
+  gb    max_abs=1.562e-02  mean_abs=1.787e-05  rel_max=3.333e-03  ref_max=4.688e+00
+
+  worst_rel_max=5.000e-03  bf16_eps≈7.8e-03  VERDICT: OK (threshold: OK<5e-2, MARGINAL<1e-1, else FAIL)
+
+=== DONE: Sat Apr 18 15:06:33 BST 2026 (python exit=0) ===

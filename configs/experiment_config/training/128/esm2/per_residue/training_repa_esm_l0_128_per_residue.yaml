@@ -1,0 +1,44 @@
+# @package _global_
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_esm_l0_128_per_residue
+
+dataset: pdb_lmdb_128_esm  # ESM-specific dataset yaml (bs=32 best-guess, separate from gearnet/baseline 128 bs=80)
+dataset_config_subdir: pdb
+
+compile: true
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: esm
+    # Use the locally-staged weights when ESM_MODEL_PATH is set (avoids a
+    # per-job HF download on compute nodes), fall back to the hub id otherwise.
+    model_id: ${oc.env:ESM_MODEL_PATH,facebook/esm2_t33_650M_UR50D}
+    layer: null          # null -> use last_hidden_state
+  layers: [0]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 1280   # match ESM2-650M hidden_size
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

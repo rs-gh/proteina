@@ -12,7 +12,7 @@ datamodule:
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
     - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
       max_size: 512  # constant tensor shapes for torch.compile; ~88% PDB coverage
-  batch_size: 4  # REPA adds GearNet encoder (~10GB extra); B=4 fits in A100 80GB
+  batch_size: 7  # 2026-04-18: bumped from 4 after SDPA .contiguous() fix unlocked EFFICIENT backend. Even with GearNet (+10GB), sweep measured max_bs=7 at 68.3GB peak. Now matches 512 baseline bs=7, restoring 3,584 residues/step symmetry. See evaluation/proteina/results/batch_size_sweep/batch_size_results.csv
   num_workers: 2  # spawn smoke test passed; 2 is sweet spot (no gain at 4)
   pin_memory: True
 

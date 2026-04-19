@@ -12,7 +12,7 @@ datamodule:
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
     - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
       max_size: 512  # constant tensor shapes for torch.compile; ~88% PDB coverage # try 128 or 256
-  batch_size: 6  # B=8 OOMs with torch.compile on A100 80GB; B=6 is safe
+  batch_size: 7  # 2026-04-18: bumped from 6 after SDPA .contiguous() fix unlocked EFFICIENT backend. Sweep measured max_bs=7 at 68.2GB peak (A100 80GB). See evaluation/proteina/results/batch_size_sweep/batch_size_results.csv
   num_workers: 2  # spawn smoke test passed; 2 is sweet spot (no gain at 4)
   pin_memory: True
 

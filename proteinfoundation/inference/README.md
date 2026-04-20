@@ -9,7 +9,7 @@ Upstream Proteina inference scripts (in `proteinfoundation/inference/*.py`) defa
 - `inference_fid_60m_{baseline,repa,repa_layer0,repa_layer9,smoke}/` — per-config run dirs (typically `samples_fid/*.pdb` and other artefacts)
 - `results_inference_fid_60m_*_fid.csv` — one-row CSVs of aggregate FID / fJSD / fS metrics per run
 
-These have since been superseded by the lite-eval sweep under `evaluation/proteina/` (in the main repo), which writes to `evaluation/proteina/results/pdb/fid/` with richer per-step coverage. The artefacts here are kept on disk for provenance but are not canonical.
+These have since been superseded by the lite-eval sweep under `evaluation/proteina/` (in the main repo), which writes to `evaluation/proteina/generation/results/pdb/fid/` with richer per-step coverage. The artefacts here are kept on disk for provenance but are not canonical.
 
 ## Maintenance
 

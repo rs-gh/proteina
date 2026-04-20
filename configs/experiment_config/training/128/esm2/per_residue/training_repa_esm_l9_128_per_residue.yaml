@@ -5,7 +5,7 @@ defaults:
 
 run_name_: proteina_60m_repa_esm_l9_128_per_residue
 
-dataset: pdb_lmdb_128_esm  # ESM-specific dataset yaml (bs=32 best-guess, separate from gearnet/baseline 128 bs=80)
+dataset: pdb_lmdb_128_esm  # ESM-specific dataset yaml (bs=80, confirmed 2026-04-18 by sweep job 27978922; peak 62.0GB / 80GB A100)
 dataset_config_subdir: pdb
 
 compile: true

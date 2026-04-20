@@ -3,7 +3,7 @@ defaults:
   - /training_ca
   - _self_
 
-run_name_: proteina_60m_repa_esm_l0_128_per_residue
+run_name_: proteina_60m_repa_esm_l3_128_per_residue
 
 dataset: pdb_lmdb_128_esm  # ESM-specific dataset yaml (bs=80, confirmed 2026-04-18 by sweep job 27978922; peak 62.0GB / 80GB A100)
 dataset_config_subdir: pdb
@@ -25,7 +25,7 @@ repa:
     # per-job HF download on compute nodes), fall back to the hub id otherwise.
     model_id: ${oc.env:ESM_MODEL_PATH,facebook/esm2_t33_650M_UR50D}
     layer: null          # null -> use last_hidden_state
-  layers: [0]
+  layers: [3]
   lambda_repa: 0.5
   combination_mode: additive
   similarity_type: cosine

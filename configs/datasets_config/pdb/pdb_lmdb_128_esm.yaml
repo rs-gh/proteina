@@ -13,7 +13,7 @@ datamodule:
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
     - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
       max_size: 128
-  batch_size: 80  # 2026-04-18: probe (job 27978922) measured ESM2-650M REPA at seq=128 fits at bs=80, peak 62.0GB / 80GB A100 (~22% headroom). Matches gearnet 128 bs=80 — ESM is bigger but mostly frozen so persistent footprint is just params (~1.3GB). True max may be higher (probe upper bound was 80); a wider probe is queued. See evaluation/proteina/results/batch_size_sweep/batch_size_results_esm_128.csv
+  batch_size: 80  # 2026-04-18: probe (job 27978922) measured ESM2-650M REPA at seq=128 fits at bs=80, peak 62.0GB / 80GB A100 (~22% headroom). Matches gearnet 128 bs=80 — ESM is bigger but mostly frozen so persistent footprint is just params (~1.3GB). True max may be higher (probe upper bound was 80); a wider probe is queued. See evaluation/proteina/bench/results/batch_size_sweep/batch_size_results_esm_128.csv
   num_workers: 2
   pin_memory: True
 

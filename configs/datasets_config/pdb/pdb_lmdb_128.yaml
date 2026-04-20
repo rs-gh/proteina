@@ -13,7 +13,7 @@ datamodule:
     - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
     - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
       max_size: 128
-  batch_size: 80  # 2026-04-18: bumped from 24 after SDPA .contiguous() fix unlocked EFFICIENT backend. Sweep measured max_bs=98 at 72.5GB peak; 80 leaves 18% headroom. See evaluation/proteina/results/batch_size_sweep/batch_size_results.csv
+  batch_size: 80  # 2026-04-18: bumped from 24 after SDPA .contiguous() fix unlocked EFFICIENT backend. Sweep measured max_bs=98 at 72.5GB peak; 80 leaves 18% headroom. See evaluation/proteina/bench/results/batch_size_sweep/batch_size_results.csv
   num_workers: 2
   pin_memory: True
 

@@ -1,0 +1,30 @@
+# @package _global_
+# 2026-04-19 clean restart: previous run trained at bs=24 (pre-2026-04-18 config bump); this run starts fresh at bs=80 for apples-to-apples comparison with REPA variants. New run_name avoids picking up the old checkpoints.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_baseline_128_bs80
+
+dataset: pdb_lmdb_128
+dataset_config_subdir: pdb
+
+compile: true
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

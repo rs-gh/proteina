@@ -109,6 +109,12 @@ if __name__ == "__main__":
         default=None,
         help="Subdirectory under experiment_config/ (e.g. 'training/256').",
     )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=-1,
+        help="Lightning Trainer max_steps. -1 (default) means unlimited; use a small value (e.g. 100) for smoke runs.",
+    )
     args = parser.parse_args()
 
     logger.add(
@@ -273,6 +279,31 @@ if __name__ == "__main__":
     if cfg_exp.opt.skip_nan_grad:
         callbacks.append(SkipNanGradCallback())
 
+    # Length-bucketed training: mutate trainer.accumulate_grad_batches per
+    # batch so effective optimizer-step BS is ~constant across buckets. See
+    # docs/research/proteina_training_runs.md ("Length-bucketed training").
+    if cfg_data.datamodule.get("sampling_mode") == "length-bucketed":
+        from proteinfoundation.callbacks.per_bucket_grad_accum import (
+            PerBucketGradAccumCallback,
+        )
+
+        bucket_boundaries = list(cfg_data.datamodule.bucket_boundaries)
+        bucket_batch_sizes = list(cfg_data.datamodule.bucket_batch_sizes)
+        target_effective_bs = cfg_exp.opt.get(
+            "target_effective_bs", max(bucket_batch_sizes)
+        )
+        callbacks.append(
+            PerBucketGradAccumCallback(
+                bucket_boundaries=bucket_boundaries,
+                bucket_batch_sizes=bucket_batch_sizes,
+                target_effective_bs=target_effective_bs,
+            )
+        )
+        log_info(
+            f"Length-bucketed training: boundaries={bucket_boundaries}, "
+            f"bucket_bs={bucket_batch_sizes}, target_effective_bs={target_effective_bs}"
+        )
+
     # Generation quality evaluation callback
     eval_cb_cfg = cfg_exp.get("eval_callback")
     if eval_cb_cfg is not None and eval_cb_cfg.get("enabled", False):
@@ -307,14 +338,23 @@ if __name__ == "__main__":
 
     # torch.compile for faster training (requires constant tensor shapes via PaddingTransform)
     if cfg_exp.get("compile", False):
-        log_info("Compiling model.nn with torch.compile (mode=default)")
-        model.nn = torch.compile(model.nn)
+        # Length-bucketed training sees a small, fixed set of (B, N) shapes (one per
+        # bucket). Force dynamic=False so each bucket gets its own static graph
+        # instead of Dynamo's automatic_dynamic path, which switches to symbolic
+        # shapes on the second distinct shape and can trip Inductor on ops with
+        # additive shape offsets (e.g. num_registers=10 → `s2 + 10`). P2 verified
+        # static compilation works cleanly across all 4 bucket shapes.
+        bucketed = cfg_data.datamodule.get("sampling_mode") == "length-bucketed"
+        dyn = False if bucketed else None
+        log_info(f"Compiling model.nn with torch.compile (mode=default, dynamic={dyn})")
+        model.nn = torch.compile(model.nn, dynamic=dyn)
 
     # Train
     plugins = []
     show_prog_bar = args.show_prog_bar
     trainer = L.Trainer(
         max_epochs=cfg_exp.opt.max_epochs,
+        max_steps=args.max_steps,
         accelerator=cfg_exp.hardware.accelerator,
         devices=cfg_exp.hardware.ngpus_per_node_,
         num_nodes=cfg_exp.hardware.nnodes_,
@@ -332,5 +372,6 @@ if __name__ == "__main__":
         precision=precision,
         gradient_clip_algorithm="norm",
         gradient_clip_val=1.0,
+        use_distributed_sampler=(cfg_data.datamodule.get("sampling_mode") != "length-bucketed"),
     )
     trainer.fit(model, datamodule, ckpt_path=last_ckpt_path, weights_only=False)

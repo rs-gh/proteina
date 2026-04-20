@@ -31,6 +31,101 @@ FLOAT_PADDING_VALUE = 1e-8
 NON_FLOAT_PADDING_VALUE = -1
 
 
+def _appropriate_pad_value(t: torch.Tensor) -> float:
+    """Matches the per-dtype padding convention used by `_dense_pad_tensor`."""
+    if torch.is_floating_point(t):
+        return FLOAT_PADDING_VALUE
+    if t.dtype == torch.bool:
+        return 0
+    return NON_FLOAT_PADDING_VALUE
+
+
+def _pad_tensor_dim(t: torch.Tensor, dim: int, pad_amount: int, value: float) -> torch.Tensor:
+    """Right-pad `t` along `dim` by `pad_amount` with `value` using F.pad."""
+    pad = [0, 0] * t.ndim
+    pos = 2 * (t.ndim - 1 - dim)  # F.pad pads from last dim backwards
+    pad[pos + 1] = pad_amount
+    return torch.nn.functional.pad(t, tuple(pad), mode="constant", value=value)
+
+
+def _pad_dense_batch_to_target(
+    batch: BaseData,
+    mask_dict: Mapping,
+    natural_n: int,
+    target_length: int,
+) -> None:
+    """Post-hoc pad node-dim tensors in a collated dense batch from `natural_n` to
+    `target_length`.
+
+    Node-dim tensors are identified by the shape signal `t.shape[1] == natural_n`
+    (dim 0 is batch). This avoids touching non-node-dim tensors (e.g., edge_index,
+    per-sample scalars) while cleanly extending per-residue features to the
+    target length.
+
+    Mutates `batch` and `mask_dict` in place.
+    """
+    if target_length == natural_n:
+        return
+    assert target_length > natural_n, (
+        f"target_length={target_length} must be >= natural_n={natural_n}"
+    )
+    pad_amount = target_length - natural_n
+
+    def maybe_pad(t: Any, pad_value: float) -> Any:
+        if not isinstance(t, torch.Tensor) or t.ndim < 2 or t.size(1) != natural_n:
+            return t
+        return _pad_tensor_dim(t, dim=1, pad_amount=pad_amount, value=pad_value)
+
+    for store in batch.stores:
+        for attr in list(store.keys()):
+            val = store[attr]
+            if isinstance(val, torch.Tensor):
+                store[attr] = maybe_pad(val, _appropriate_pad_value(val))
+
+    for k, v in list(mask_dict.items()):
+        if isinstance(v, Mapping):
+            for kk, vv in list(v.items()):
+                if isinstance(vv, torch.Tensor):
+                    mask_dict[k][kk] = maybe_pad(vv, 0)
+        elif isinstance(v, torch.Tensor):
+            mask_dict[k] = maybe_pad(v, 0)
+
+
+def _num_nodes_of(d: BaseData) -> int:
+    """Return residue count for a PyG Data object. PyG's `Data.num_nodes` is a
+    lazily-inferred property that returns None when no recognized node-dim
+    attribute is present; fall back to `coords.shape[0]` (the canonical
+    node-dim tensor in proteina graphs)."""
+    n = d.num_nodes
+    if n is not None:
+        return int(n)
+    coords = d.get("coords") if hasattr(d, "get") else getattr(d, "coords", None)
+    if coords is None:
+        raise ValueError(
+            "Data object has neither num_nodes nor coords — can't determine bucket."
+        )
+    return int(coords.shape[0])
+
+
+def _target_length_for_batch(
+    data_list: List[BaseData], bucket_boundaries: Optional[Sequence[int]]
+) -> Optional[int]:
+    """Given a batch of PyG Data objects and optional bucket boundaries, return the
+    padding target (smallest boundary >= batch's max num_nodes). Returns None when
+    boundaries are not configured — caller should skip bucket-max padding.
+    """
+    if bucket_boundaries is None:
+        return None
+    batch_max = max(_num_nodes_of(d) for d in data_list)
+    candidates = [b for b in bucket_boundaries if b >= batch_max]
+    if not candidates:
+        raise ValueError(
+            f"Batch contains a sample with num_nodes={batch_max} that exceeds the "
+            f"largest bucket boundary {max(bucket_boundaries)}."
+        )
+    return int(min(candidates))
+
+
 def _dense_pad_tensor(
     key,
     values,
@@ -301,6 +396,7 @@ def dense_padded_from_data_list(
     data_list: List[BaseData],
     follow_batch: Optional[List[str]] = None,
     exclude_keys: Optional[List[str]] = None,
+    bucket_boundaries: Optional[Sequence[int]] = None,
 ):
     r"""Constructs a dense `~torch_geometric.data.Batch` object from a Python list of
     `~torch_geometric.data.Data` or `~torch_geometric.data.HeteroData` objects. The assignment
@@ -313,9 +409,15 @@ def dense_padded_from_data_list(
             each key in the list. (default: `None`)
         exclude_keys (list, optional): Will exclude each key in the list.
             (default: `None`)
+        bucket_boundaries (Sequence[int], optional): If provided, node-dim tensors
+            are padded to the smallest boundary >= max(num_nodes) in the batch.
+            Enables fixed `(B, N)` shapes per bucket so `torch.compile` caches
+            one graph per bucket. When None (default), padding is batch-max.
 
     Returns:
-        A single `Batch` object holding a mini-batch of data.
+        A single `Batch` object holding a mini-batch of data. When
+        `bucket_boundaries` is provided, also sets `batch.bucket_length` to the
+        padded residue dimension.
     """
     batch, mask_dict = dense_padded_collate(
         Batch,
@@ -325,6 +427,13 @@ def dense_padded_from_data_list(
     )
 
     batch._num_graphs = len(data_list)
+
+    target_length = _target_length_for_batch(data_list, bucket_boundaries)
+    if target_length is not None:
+        natural_n = max(_num_nodes_of(d) for d in data_list)
+        _pad_dense_batch_to_target(batch, mask_dict, natural_n, target_length)
+        batch.bucket_length = target_length
+
     batch.mask_dict = mask_dict  # NOTE: `mask_dict` must be a public attribute of `Batch` for auto-device onloading to work.
 
     return batch
@@ -337,6 +446,11 @@ class DensePaddingCollater:
     Data objects can be
     either of type `~torch_geometric.data.Data` or
     `~torch_geometric.data.HeteroData`.
+
+    When `bucket_boundaries` is provided, node-dim tensors are padded to the
+    smallest boundary >= max(num_nodes) in the batch rather than the batch max.
+    Combined with a length-bucketed sampler this yields fixed `(B, N)` shapes
+    per bucket so `torch.compile` caches one graph per bucket.
     """
 
     def __init__(
@@ -344,10 +458,14 @@ class DensePaddingCollater:
         dataset: Union[Dataset, Sequence[BaseData], DatasetAdapter],
         follow_batch: Optional[List[str]] = None,
         exclude_keys: Optional[List[str]] = None,
+        bucket_boundaries: Optional[Sequence[int]] = None,
     ):
         self.dataset = dataset
         self.follow_batch = follow_batch
         self.exclude_keys = exclude_keys
+        self.bucket_boundaries = (
+            list(bucket_boundaries) if bucket_boundaries is not None else None
+        )
 
     def __call__(self, batch: List[Any]) -> Any:
         """Collates a python list of data objects to the internal storage format of
@@ -365,6 +483,7 @@ class DensePaddingCollater:
                 batch,
                 follow_batch=self.follow_batch,
                 exclude_keys=self.exclude_keys,
+                bucket_boundaries=self.bucket_boundaries,
             )
         elif isinstance(elem, torch.Tensor):
             return default_collate(batch)
@@ -426,6 +545,7 @@ class DensePaddingDataLoader(torch.utils.data.DataLoader):
         shuffle: bool = False,
         follow_batch: Optional[List[str]] = None,
         exclude_keys: Optional[List[str]] = None,
+        bucket_boundaries: Optional[Sequence[int]] = None,
         **kwargs,
     ):
         # Remove for PyTorch Lightning:
@@ -435,7 +555,9 @@ class DensePaddingDataLoader(torch.utils.data.DataLoader):
         self.follow_batch = follow_batch
         self.exclude_keys = exclude_keys
 
-        self.collator = DensePaddingCollater(dataset, follow_batch, exclude_keys)
+        self.collator = DensePaddingCollater(
+            dataset, follow_batch, exclude_keys, bucket_boundaries=bucket_boundaries
+        )
 
         if isinstance(dataset, OnDiskDataset):
             dataset = range(len(dataset))

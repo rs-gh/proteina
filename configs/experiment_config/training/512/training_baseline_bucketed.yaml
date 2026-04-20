@@ -1,0 +1,42 @@
+# @package _global_
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_baseline_512_bucketed
+
+# Length-bucketed dataset: 4 buckets (128, 256, 384, 512) with per-bucket BS.
+# See docs/research/proteina_training_runs.md for rationale + known caveats.
+dataset: pdb_lmdb_512_bucketed
+dataset_config_subdir: pdb
+
+# Enable torch.compile. Bucketed shapes mean one cached graph per bucket
+# (P2 verified) instead of eager fallback.
+compile: true
+
+# Per-bucket grad accum — PerBucketGradAccumCallback sets
+# accumulate_grad_batches[b] = round(target_effective_bs / bucket_batch_sizes[b])
+# so the optimizer step sees roughly the same effective BS regardless of
+# which bucket the batch came from. 80 matches the largest bucket's BS
+# (n=128), so that bucket runs accum=1 and longer buckets accumulate.
+opt:
+  target_effective_bs: 80
+  accumulate_grad_batches: 1  # callback overrides per-batch; keep trainer default at 1
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

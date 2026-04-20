@@ -19,6 +19,7 @@ from torch_geometric.loader import DataLoader
 
 from proteinfoundation.utils.cluster_utils import ClusterSampler
 from proteinfoundation.utils.dense_padding_data_loader import DensePaddingDataLoader
+from proteinfoundation.utils.length_bucket_sampler import LengthBucketedBatchSampler
 
 
 class BaseLightningDataModule(L.LightningDataModule, ABC):
@@ -27,13 +28,17 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
     def __init__(
         self,
         batch_padding: bool = True,
-        sampling_mode: Literal["random", "cluster-random", "cluster-reps"] = "random",
+        sampling_mode: Literal[
+            "random", "cluster-random", "cluster-reps", "length-bucketed"
+        ] = "random",
         transforms: Optional[List[Callable]] = None,
         pre_transforms: Optional[List[Callable]] = None,
         pre_filters: Optional[List[Callable]] = None,
         batch_size: int = 32,
         num_workers: int = 32,
         pin_memory: bool = False,
+        bucket_boundaries: Optional[List[int]] = None,
+        bucket_batch_sizes: Optional[List[int]] = None,
     ):
         """Initialising the base data module class.
 
@@ -54,10 +59,24 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
             batch_size (int, optional): Batch size used for dataloaders. Defaults to 32.
             num_workers (int, optional): Number of workers used for dataloading. Defaults to 32.
             pin_memory (bool, optional): Whether memory should be pinned. Defaults to False.
+            bucket_boundaries (List[int], optional): Inclusive upper edges (ascending)
+                for length-bucketed sampling; e.g. [128, 256, 384, 512] yields 4 buckets.
+                Required when `sampling_mode="length-bucketed"`, ignored otherwise.
+            bucket_batch_sizes (List[int], optional): Per-bucket batch sizes; one entry
+                per bucket boundary. Required when `sampling_mode="length-bucketed"`,
+                ignored otherwise.
         """
         super().__init__()
         self.batch_padding = batch_padding
         self.sampling_mode = sampling_mode
+        self.bucket_boundaries = bucket_boundaries
+        self.bucket_batch_sizes = bucket_batch_sizes
+        if sampling_mode == "length-bucketed":
+            if bucket_boundaries is None or bucket_batch_sizes is None:
+                raise ValueError(
+                    "sampling_mode='length-bucketed' requires both "
+                    "bucket_boundaries and bucket_batch_sizes."
+                )
         self.transform = (
             self._compose_transforms(transforms) if transforms is not None else None
         )
@@ -136,8 +155,40 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
         """
         if self.sampling_mode is None:
             raise ValueError(
-                "Sampling mode not set, should be one of 'random', 'cluster-random' or 'cluster-reps'"
+                "Sampling mode not set, should be one of 'random', 'cluster-random', 'cluster-reps', or 'length-bucketed'"
             )
+
+        # Length-bucketed path: replaces batch_size/shuffle/sampler with a
+        # BatchSampler that yields length-homogeneous batches, and pads each
+        # batch to its bucket's upper edge. Combined with torch.compile this
+        # gives one cached graph per bucket instead of eager fallback.
+        if self.sampling_mode == "length-bucketed":
+            if not self.batch_padding:
+                raise ValueError(
+                    "length-bucketed sampling requires batch_padding=True "
+                    "(the collator handles bucket-max padding)."
+                )
+            if not hasattr(dataset, "get_lengths"):
+                raise ValueError(
+                    f"length-bucketed sampling requires the dataset to expose "
+                    f"`get_lengths()`; {type(dataset).__name__} does not."
+                )
+            batch_sampler = LengthBucketedBatchSampler(
+                lengths=dataset.get_lengths(),
+                bucket_boundaries=self.bucket_boundaries,
+                bucket_batch_sizes=self.bucket_batch_sizes,
+                shuffle=shuffle,
+                drop_last=True,
+            )
+            logger.info(batch_sampler.describe())
+            return DensePaddingDataLoader(
+                dataset,
+                batch_sampler=batch_sampler,
+                bucket_boundaries=self.bucket_boundaries,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+            )
+
         if clusterid_to_seqid_mapping and self.sampling_mode != "random":
             sampler = ClusterSampler(
                 dataset=dataset,
@@ -195,11 +246,12 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
         # segfaults on clusters where fork+CUDA interact badly.
         saved = self.num_workers
         self.num_workers = 0
-        val_dl = self._get_dataloader(
-            dataset=self.val_ds,
-            shuffle=shuffle,
-            clusterid_to_seqid_mapping=clusterid_to_seqid_mapping,
-        )
+        with self._non_bucketed_mode():
+            val_dl = self._get_dataloader(
+                dataset=self.val_ds,
+                shuffle=shuffle,
+                clusterid_to_seqid_mapping=clusterid_to_seqid_mapping,
+            )
         self.num_workers = saved
         return val_dl
 
@@ -212,9 +264,32 @@ class BaseLightningDataModule(L.LightningDataModule, ABC):
             else None
         )
         shuffle = False
-        test_dl = self._get_dataloader(
-            dataset=self.test_ds,
-            shuffle=shuffle,
-            clusterid_to_seqid_mapping=clusterid_to_seqid_mapping,
-        )
+        with self._non_bucketed_mode():
+            test_dl = self._get_dataloader(
+                dataset=self.test_ds,
+                shuffle=shuffle,
+                clusterid_to_seqid_mapping=clusterid_to_seqid_mapping,
+            )
         return test_dl
+
+    def _non_bucketed_mode(self):
+        """Context manager that temporarily switches out of length-bucketed mode
+        for val/test dataloaders. Bucketing is a train-only optimization (only
+        the train path hits the torch.compile hot loop), so val/test fall back
+        to random sampling with `self.batch_size`.
+        """
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            if self.sampling_mode != "length-bucketed":
+                yield
+                return
+            saved_mode = self.sampling_mode
+            self.sampling_mode = "random"
+            try:
+                yield
+            finally:
+                self.sampling_mode = saved_mode
+
+        return _cm()

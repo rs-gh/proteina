@@ -53,6 +53,7 @@ class ProteinLMDBDataset(Dataset):
 
         # Build filtered key list eagerly if max_num_residues is set,
         # otherwise just count entries. Needed by DataLoader before forking.
+        self._filtered_lengths: Optional[np.ndarray] = None
         if max_num_residues is not None:
             self._filtered_keys = self._build_filtered_keys()
             self._len = len(self._filtered_keys)
@@ -101,6 +102,7 @@ class ProteinLMDBDataset(Dataset):
 
             mask = lengths <= self.max_num_residues
             filtered = [k for k, m in zip(all_keys, mask) if m]
+            self._filtered_lengths = lengths[mask].astype(np.int64, copy=False)
             logger.info(
                 f"Filtered {len(filtered)}/{len(all_keys)} entries "
                 f"(<= {self.max_num_residues} residues)"
@@ -126,22 +128,39 @@ class ProteinLMDBDataset(Dataset):
             meminit=False,
         )
         filtered = []
+        filtered_lengths: list[int] = []
         with db.begin() as txn:
             cursor = txn.cursor()
             total = db.stat()["entries"]
             for i, (key, value) in enumerate(cursor):
                 data = pickle.loads(value)
-                if data.coords.shape[0] <= self.max_num_residues:
+                n = int(data.coords.shape[0])
+                if n <= self.max_num_residues:
                     filtered.append(key)
+                    filtered_lengths.append(n)
                 if (i + 1) % 50000 == 0:
                     logger.info(f"  Scanned {i + 1}/{total}, kept {len(filtered)} so far")
 
         db.close()
+        self._filtered_lengths = np.asarray(filtered_lengths, dtype=np.int64)
         logger.info(
             f"Scan complete: {len(filtered)}/{total} entries "
             f"(<= {self.max_num_residues} residues)"
         )
         return filtered
+
+    def get_lengths(self) -> np.ndarray:
+        """Per-sample lengths aligned with dataset indexing (required by
+        LengthBucketedBatchSampler). Raises if the dataset was constructed
+        without `max_num_residues` — in that case the filtered key list is
+        not built and no length index has been loaded.
+        """
+        if self._filtered_lengths is None:
+            raise RuntimeError(
+                "get_lengths() requires max_num_residues to be set so the length "
+                "index is loaded at construction time."
+            )
+        return self._filtered_lengths
 
     def _connect_db(self):
         """Open LMDB in read-only mode. Called lazily in each worker."""

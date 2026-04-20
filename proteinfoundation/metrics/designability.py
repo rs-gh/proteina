@@ -92,8 +92,14 @@ def run_proteinmpnn(
     if python_exec is None:
         python_exec = "python"
 
+    mpnn_dir = os.environ.get(
+        "PROTEINMPNN_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "..", "..", "ProteinMPNN"),
+    )
+    mpnn_weights_root = os.environ.get("PROTEINMPNN_WEIGHTS_DIR")
+
     command = f"""
-    {python_exec} ./ProteinMPNN/protein_mpnn_run.py \
+    {python_exec} {mpnn_dir}/protein_mpnn_run.py \
         --pdb_path {pdb_file_path} \
         --pdb_path_chains A \
         --out_folder {out_dir_root} \
@@ -105,6 +111,10 @@ def run_proteinmpnn(
 
     if ca_only:
         command += " --ca_only "
+        if mpnn_weights_root:
+            command += f" --path_to_model_weights {mpnn_weights_root}/ca_model_weights "
+    elif mpnn_weights_root:
+        command += f" --path_to_model_weights {mpnn_weights_root}/vanilla_model_weights "
     if seed is not None:
         command += f" --seed {seed} "
     if not verbose:
@@ -122,28 +132,40 @@ def run_proteinmpnn(
 
 
 # I got this function from hugging face's ESM notebook example
-def convert_outputs_to_pdb(outputs) -> List[str]:
-    """Takes ESMFold outputs and converts them to a list of PDBs (as strings)."""
+def convert_outputs_to_pdb(outputs):
+    """Takes ESMFold outputs and converts them to a list of PDBs (as strings).
+
+    Returns:
+        (pdbs, plddt_means): list[str] of PDB file contents, and list[float] of
+        per-sample mean pLDDT (averaged over residues/atoms).
+
+    Note: HF `EsmForProteinFolding` returns pLDDT in the [0, 1] range, not the
+    paper convention of [0, 100]. Values here are NOT scaled — consumers should
+    multiply by 100 if they need the conventional pLDDT scale.
+    """
     final_atom_positions = atom14_to_atom37(outputs["positions"][-1], outputs)
     outputs = {k: v.to("cpu").numpy() for k, v in outputs.items()}
     final_atom_positions = final_atom_positions.cpu().numpy()
     final_atom_mask = outputs["atom37_atom_exists"]
     pdbs = []
+    plddt_means = []
     for i in range(outputs["aatype"].shape[0]):
         aa = outputs["aatype"][i]
         pred_pos = final_atom_positions[i]
         mask = final_atom_mask[i]
         resid = outputs["residue_index"][i] + 1
+        plddt_i = outputs["plddt"][i]
         pred = OFProtein(
             aatype=aa,
             atom_positions=pred_pos,
             atom_mask=mask,
             residue_index=resid,
-            b_factors=outputs["plddt"][i],
+            b_factors=plddt_i,
             chain_index=outputs["chain_index"][i] if "chain_index" in outputs else None,
         )
         pdbs.append(to_pdb(pred))
-    return pdbs
+        plddt_means.append(float(plddt_i.mean()))
+    return pdbs, plddt_means
 
 
 def load_esmfold():
@@ -172,7 +194,7 @@ def run_and_store_esm(
     path_to_esmfold_out: str,
     esm_model=None,
     tokenizer=None,
-) -> List[str]:
+):
     """
     Runs ESMFold and stores results as PDB files.
 
@@ -187,7 +209,8 @@ def run_and_store_esm(
         tokenizer: Pre-loaded tokenizer (optional, loads if None)
 
     Returns:
-        List of paths (list of str) to PDB files
+        (out_esm_paths, plddt_means): list of PDB paths and list of per-sequence
+        mean pLDDT values (same ordering as `seqs`).
     """
     if esm_model is None or tokenizer is None:
         esm_model, tokenizer = load_esmfold()
@@ -196,6 +219,7 @@ def run_and_store_esm(
     len(seqs)
     max_nres = max([len(x) for x in seqs])
     list_of_strings_pdb = []
+    list_of_plddt_means = []
     if max_nres > 700:
         batch_size = 1
         num_batches = 8
@@ -221,8 +245,9 @@ def run_and_store_esm(
         with torch.no_grad():
             _outputs = esm_model(**inputs)
 
-        _list_of_strings_pdb = convert_outputs_to_pdb(_outputs)
+        _list_of_strings_pdb, _plddt_means = convert_outputs_to_pdb(_outputs)
         list_of_strings_pdb.extend(_list_of_strings_pdb)
+        list_of_plddt_means.extend(_plddt_means)
 
     # Create out directory if not there
     if not os.path.exists(path_to_esmfold_out):
@@ -236,7 +261,7 @@ def run_and_store_esm(
         with open(fdir, "w") as f:
             f.write(pdb)
             out_esm_paths.append(fdir)
-    return out_esm_paths
+    return out_esm_paths, list_of_plddt_means
 
 
 ## ## ## ## ## ## ## ## ## ## ## ##
@@ -335,7 +360,7 @@ def scRMSD(
     )  # List of sequences
 
     logger.info(f"Running ESMFold for {name}")
-    out_esm_paths = run_and_store_esm(name, mpnn_gen_seqs, tmp_path)
+    out_esm_paths, _ = run_and_store_esm(name, mpnn_gen_seqs, tmp_path)
     # List of paths to PDBs
 
     # Compute RMSDs
@@ -377,8 +402,12 @@ def batch_designability(
         Dict with keys:
             scRMSD_list: Per-protein best scRMSD values.
             tm_score_list: Per-protein best TM-scores.
+            plddt_list: Per-protein mean pLDDT of the best-scRMSD refolded sequence.
+                HF ESMFold returns pLDDT in [0, 1] (not the [0, 100] paper
+                convention); values are passed through unscaled.
             scRMSD_mean, scRMSD_median: Aggregate RMSD stats.
             tm_score_mean: Aggregate TM-score stat.
+            plddt_mean, plddt_median: Aggregate pLDDT stats (in [0, 1]).
             designability_rate: Fraction with scRMSD < 2.0 Angstrom.
     """
     from proteinfoundation.metrics.tm_score import compute_tm_score
@@ -387,6 +416,7 @@ def batch_designability(
 
     scRMSD_list = []
     tm_score_list = []
+    plddt_list = []
 
     for pdb_path in pdb_paths:
         name = pdb_name_from_path(pdb_path)
@@ -402,7 +432,7 @@ def batch_designability(
             )
 
             # ESMFold: fold sequences (reuse loaded model)
-            esm_paths = run_and_store_esm(
+            esm_paths, esm_plddts = run_and_store_esm(
                 name, mpnn_seqs, tmp_path,
                 esm_model=esm_model, tokenizer=tokenizer,
             )
@@ -413,15 +443,18 @@ def batch_designability(
 
             best_rmsd = float("inf")
             best_tm = 0.0
+            best_plddt = float("nan")  # pLDDT of the best-scRMSD refold
 
-            for esm_path in esm_paths:
+            for esm_path, esm_plddt in zip(esm_paths, esm_plddts):
                 rec_prot = load_pdb(esm_path)
                 rec_coors = torch.Tensor(rec_prot.atom_positions)
 
                 # RMSD
                 n_common = min(len(gen_coors), len(rec_coors))
                 rmsd = rmsd_metric(gen_coors[:n_common], rec_coors[:n_common])
-                best_rmsd = min(best_rmsd, rmsd)
+                if rmsd < best_rmsd:
+                    best_rmsd = rmsd
+                    best_plddt = esm_plddt
 
                 # TM-score
                 tm = compute_tm_score(
@@ -432,6 +465,7 @@ def batch_designability(
 
             scRMSD_list.append(best_rmsd)
             tm_score_list.append(best_tm)
+            plddt_list.append(best_plddt)
 
         except Exception as e:
             logger.warning(f"Designability failed for {pdb_path}: {e}")
@@ -444,12 +478,16 @@ def batch_designability(
     import numpy as np
     scRMSD_arr = np.array(scRMSD_list)
     tm_arr = np.array(tm_score_list)
+    plddt_arr = np.array(plddt_list)
 
     return {
         "scRMSD_list": scRMSD_list,
         "tm_score_list": tm_score_list,
+        "plddt_list": plddt_list,
         "scRMSD_mean": float(scRMSD_arr.mean()) if len(scRMSD_arr) > 0 else float("nan"),
         "scRMSD_median": float(np.median(scRMSD_arr)) if len(scRMSD_arr) > 0 else float("nan"),
         "tm_score_mean": float(tm_arr.mean()) if len(tm_arr) > 0 else float("nan"),
+        "plddt_mean": float(plddt_arr.mean()) if len(plddt_arr) > 0 else float("nan"),
+        "plddt_median": float(np.median(plddt_arr)) if len(plddt_arr) > 0 else float("nan"),
         "designability_rate": float((scRMSD_arr < 2.0).mean()) if len(scRMSD_arr) > 0 else float("nan"),
     }

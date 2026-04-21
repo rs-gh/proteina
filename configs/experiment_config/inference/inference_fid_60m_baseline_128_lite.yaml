@@ -1,0 +1,17 @@
+# @package _global_
+defaults:
+  - inference_fid_60m_baseline
+  - _self_
+
+run_name_: eval_60m_baseline_128_lite
+
+ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_baseline_128/checkpoints
+ckpt_name: last-EMA.ckpt
+
+# n=128 eval: 200 samples at the training cap length
+nres_lens: [128]
+min_len:
+max_len:
+step_len:
+nsamples_per_len: 200
+max_nsamples: 320

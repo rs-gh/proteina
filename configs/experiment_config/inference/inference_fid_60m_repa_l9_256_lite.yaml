@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - inference_fid_60m_baseline_256_lite
+  - _self_
+
+run_name_: eval_60m_repa_l9_256_lite
+
+ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_repa_l9_256_per_residue/checkpoints

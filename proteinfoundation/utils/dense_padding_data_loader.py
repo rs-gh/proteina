@@ -479,11 +479,15 @@ class DensePaddingCollater:
         """
         elem = batch[0]
         if isinstance(elem, BaseData):
+            # Backward-compat: use getattr so instances pickled from pre-bucketing
+            # code (no `bucket_boundaries` in __dict__) fall back to None =
+            # non-bucketed behavior when unpickled by a worker running newer code.
+            # See feedback_collator_hotreload.md for the incident that motivated this.
             return dense_padded_from_data_list(
                 batch,
                 follow_batch=self.follow_batch,
                 exclude_keys=self.exclude_keys,
-                bucket_boundaries=self.bucket_boundaries,
+                bucket_boundaries=getattr(self, "bucket_boundaries", None),
             )
         elif isinstance(elem, torch.Tensor):
             return default_collate(batch)

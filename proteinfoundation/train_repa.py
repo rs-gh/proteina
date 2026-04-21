@@ -164,7 +164,11 @@ if __name__ == "__main__":
     # Set run name and root directory
     run_name = cfg_exp.run_name_
     log_info(f"Job name: {run_name}")
-    root_run = os.path.join(".", "store", run_name)
+    # Resolve symlinks upfront (`store` is a symlink /home/...→ /rds/...) so
+    # Lightning's atomic_save doesn't straddle filesystems when it falls back
+    # from os.rename to copyfile. Without this the temp→final move trips
+    # "Invalid cross-device link" → sendfile → spurious disk-quota errors.
+    root_run = os.path.realpath(os.path.join(".", "store", run_name))
     log_info(f"Root run: {root_run}")
 
     # Set checkpoint directory
@@ -346,6 +350,15 @@ if __name__ == "__main__":
         # static compilation works cleanly across all 4 bucket shapes.
         bucketed = cfg_data.datamodule.get("sampling_mode") == "length-bucketed"
         dyn = False if bucketed else None
+        if bucketed:
+            # 4 bucket shapes × ≥2 dtype contexts (bf16 autocast in train vs
+            # float32 in some call sites) × a few resume frames easily exceeds
+            # Dynamo's default recompile cache size (8). Once the cache fills,
+            # Dynamo silently falls back to eager for those frames, defeating
+            # the speed-up. 32 gives ~4× headroom.
+            import torch._dynamo as _dynamo
+            _dynamo.config.recompile_limit = 32
+            log_info(f"Set torch._dynamo.config.recompile_limit = 32 (bucketed)")
         log_info(f"Compiling model.nn with torch.compile (mode=default, dynamic={dyn})")
         model.nn = torch.compile(model.nn, dynamic=dyn)
 
@@ -373,5 +386,6 @@ if __name__ == "__main__":
         gradient_clip_algorithm="norm",
         gradient_clip_val=1.0,
         use_distributed_sampler=(cfg_data.datamodule.get("sampling_mode") != "length-bucketed"),
+        enable_checkpointing=not args.nolog,
     )
     trainer.fit(model, datamodule, ckpt_path=last_ckpt_path, weights_only=False)

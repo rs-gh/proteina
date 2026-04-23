@@ -7,7 +7,7 @@ per-residue features [b, n, encoder_dim] before the global pooling step.
 import torch
 import torch.nn as nn
 
-from proteinfoundation.metrics.gearnet_utils import NoTrainCAGearNet
+from proteinfoundation.metrics.gearnet_utils import NoTrainCAGearNet, NoTrainMCGearNetEdge
 
 
 class GearNetPerResidueEncoder(nn.Module):
@@ -129,3 +129,69 @@ class GearNetPerResidueEncoder(nn.Module):
         # h_v is now [total_atoms, hidden_dim=512] — per-residue since CA-only
         # Scatter back to dense format
         return self._scatter_to_dense(h_v, atom2batch, b, n, mask)
+
+
+class MCGearNetEdgePerResidueEncoder(nn.Module):
+    """Frozen MC-GearNet-Edge encoder returning per-residue features [b, n, 3072].
+
+    Wraps NoTrainMCGearNetEdge to accept dense Proteina tensors and convert them
+    to the flat format GearNetEdge expects, then scatter results back to dense.
+
+    Requires residue_type to be provided (raises if None): MC-GearNet-Edge uses
+    residue identity as node features, unlike the CA-fold variant which ignores it.
+    """
+
+    def __init__(self, ckpt_path: str):
+        super().__init__()
+        self.gearnet = NoTrainMCGearNetEdge(ckpt_path)
+        self.encoder_dim = self.gearnet.output_dim  # 3072
+
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def train(self, mode: bool = True) -> "MCGearNetEdgePerResidueEncoder":
+        return super().train(False)
+
+    @torch.no_grad()
+    def forward(self, ca_coords_nm, mask, residue_type=None):
+        """Compute per-residue MC-GearNet-Edge features.
+
+        Args:
+            ca_coords_nm: [b, n, 3] CA coordinates in nanometres
+            mask:         [b, n] boolean residue mask
+            residue_type: [b, n] long, residue indices 0-19 (AA) / 20 (UNK). Required.
+
+        Returns:
+            [b, n, 3072] — masked positions are zero.
+        """
+        if residue_type is None:
+            raise ValueError(
+                "MCGearNetEdgePerResidueEncoder requires residue_type — "
+                "MC-GearNet-Edge uses residue identity as node features."
+            )
+
+        b, n, _ = ca_coords_nm.shape
+        device = ca_coords_nm.device
+
+        # nm → Å
+        ca_coords_ang = ca_coords_nm.float() * 10.0
+
+        # Flatten to valid residues only
+        batch_ids = torch.arange(b, device=device)[:, None].expand(b, n)
+        flat_coords = ca_coords_ang.reshape(b * n, 3)
+        flat_batch = batch_ids.reshape(b * n)
+        flat_restype = residue_type.reshape(b * n)
+        flat_mask = mask.reshape(b * n).bool()
+
+        valid_coords = flat_coords[flat_mask]         # [N_valid, 3]
+        valid_batch = flat_batch[flat_mask]            # [N_valid]
+        valid_restype = flat_restype[flat_mask].clamp(0, 20)  # [N_valid]
+
+        # Run GearNetEdge
+        h_v = self.gearnet(valid_coords, valid_restype, valid_batch)  # [N_valid, 3072]
+
+        # Scatter back to dense [b, n, 3072]
+        output = torch.zeros(b * n, self.encoder_dim, device=device, dtype=h_v.dtype)
+        dense_idx = torch.arange(b * n, device=device)[flat_mask]
+        output[dense_idx] = h_v
+        return output.view(b, n, self.encoder_dim)

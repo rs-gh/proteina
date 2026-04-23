@@ -7,7 +7,7 @@ import torch.nn as nn
 from typing import Dict
 
 from proteinfoundation.proteinflow.proteina import Proteina
-from proteinfoundation.repa.gearnet_encoder import GearNetPerResidueEncoder
+from proteinfoundation.repa.gearnet_encoder import GearNetPerResidueEncoder, MCGearNetEdgePerResidueEncoder
 from proteinfoundation.repa.protein_transformer_repa import (
     ProteinTransformerAF3WithHiddenStates,
 )
@@ -30,6 +30,8 @@ def _build_encoder(repa_cfg) -> nn.Module:
     enc_type = encoder_cfg.type
     if enc_type == "gearnet":
         return GearNetPerResidueEncoder(ckpt_path=encoder_cfg.gearnet_ckpt_path)
+    if enc_type == "gearnet_mc_edge":
+        return MCGearNetEdgePerResidueEncoder(ckpt_path=encoder_cfg.gearnet_ckpt_path)
     if enc_type == "esm":
         from proteinfoundation.repa.esm_encoder import ESMPerResidueEncoder
 

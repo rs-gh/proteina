@@ -13,6 +13,7 @@ import os
 from typing import List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch_geometric.data import Batch
 from torch_geometric.nn import radius_graph
@@ -254,7 +255,7 @@ class GearNet(nn.Module):
                 Defaults to 0.1.
             dropout (Optional[float], optional): Probability in Dropout.
                 Defaults to 0.2.
-            radius (Optional[float], optional): Spatial radius (\A) for constructing structure graph
+            radius (Optional[float], optional): Spatial radius (Å) for constructing structure graph
                 Defaults to 5.0.
             num_classes (Optional[List[Tuple[str, int]]], optional): List of tuples (level, num_class), indicating which fold level to predict and the number of classes at this level.
                 Defaults to None.
@@ -509,6 +510,356 @@ class NoTrainCAGearNet(GearNet):
 
     def train(self, mode: bool) -> "NoTrainCAGearNet":
         """Force network to always be in evaluation mode."""
+        return super().train(False)
+
+
+# ── MC-GearNet-Edge: plain-PyTorch reimplementation ──────────────────────────
+#
+# Reproduces torchdrug GearNet with edge network (Zhang et al., ICLR 2023)
+# without torchdrug. Module names exactly match mc_gearnet_edge.pth (Zenodo
+# 7593637). The checkpoint has no IEConv; it is plain GearNet-Edge with:
+#   layers.{i}.{self_loop, linear, batch_norm}
+#   edge_layers.{i}.{self_loop, linear, batch_norm}
+#   batch_norms.{i}   (top-level, applied after short-cut)
+
+
+class _GearNetLayer(nn.Module):
+    """One GearNet message-passing layer. Names match layers.{i}.* and edge_layers.{i}.*."""
+
+    def __init__(self, input_dim: int, output_dim: int, num_relation: int):
+        super().__init__()
+        self.input_dim = input_dim
+        self.num_relation = num_relation
+        self.self_loop = nn.Linear(input_dim, output_dim)
+        self.linear = nn.Linear(num_relation * input_dim, output_dim)
+        self.batch_norm = nn.BatchNorm1d(output_dim)
+
+    def forward(
+        self,
+        h: torch.Tensor,          # [N, input_dim]
+        node_in: torch.Tensor,    # [E] source indices
+        node_out: torch.Tensor,   # [E] dest indices
+        rel_type: torch.Tensor,   # [E] relation indices
+        num_nodes: int,
+        edge_input: Optional[torch.Tensor] = None,  # [E, input_dim] optional edge contribution
+    ) -> torch.Tensor:
+        msg = h[node_in]
+        if edge_input is not None:
+            msg = msg + edge_input
+        idx = node_out * self.num_relation + rel_type
+        update = scatter_sum(msg, idx, dim=0, dim_size=num_nodes * self.num_relation)
+        update = update.view(num_nodes, self.num_relation * self.input_dim)
+        out = self.linear(update) + self.self_loop(h)
+        out = self.batch_norm(out)
+        return F.relu(out)
+
+
+class GearNetEdge(nn.Module):
+    """
+    Plain-PyTorch reimplementation of torchdrug GearNet with edge network.
+
+    Module names match mc_gearnet_edge.pth (Zenodo 7593637) so that
+    ``load_state_dict(torch.load(path), strict=False)`` loads correctly.
+    strict=False is required because the Zenodo checkpoint includes a
+    contrastive projection head that we intentionally omit.
+
+    Fixed hyperparameters (matching mc_gearnet_edge pretraining):
+        input_dim=21, hidden_dims=[512]*6, num_relation=7
+        edge_input_dim=59, num_angle_bin=8
+        batch_norm=True, short_cut=True, concat_hidden=True
+    Output: per-residue concat of all 6 hidden layers → 3072-dim.
+    """
+
+    _SEQ_MAX_DIST: int = 2
+    _SPATIAL_RADIUS: float = 10.0
+    _KNN_K: int = 10
+    _SEQ_MIN_DIST: int = 5
+    _SPATIAL_REL: int = 5
+    _KNN_REL: int = 6
+    _NUM_RELATION: int = 7
+    _NUM_ANGLE_BIN: int = 8
+
+    def __init__(self) -> None:
+        super().__init__()
+        node_input_dim = 21
+        hidden_dims = [512] * 6
+        num_relation = self._NUM_RELATION
+        num_angle_bin = self._NUM_ANGLE_BIN
+        edge_input_dim = 59  # 21 + 21 + 7 + 10 (see _build_edges)
+
+        # edge hidden dims mirror node hidden dims but starting from edge_input_dim
+        # layer 0: 59→21, layers 1-5: 21→512 / 512→512
+        # Deduced from checkpoint: edge_layers.0 output=21, edge_layers.1+ output=512
+        edge_hidden_dims = [21] + [512] * (len(hidden_dims) - 1)
+
+        node_dims = [node_input_dim] + list(hidden_dims)         # [21, 512, 512, ...]
+        edge_dims = [edge_input_dim] + list(edge_hidden_dims)    # [59, 21, 512, ...]
+        self.output_dim = sum(hidden_dims)  # 3072
+
+        self.layers = nn.ModuleList([
+            _GearNetLayer(node_dims[i], node_dims[i + 1], num_relation)
+            for i in range(len(hidden_dims))
+        ])
+        self.edge_layers = nn.ModuleList([
+            _GearNetLayer(edge_dims[i], edge_dims[i + 1], num_angle_bin)
+            for i in range(len(hidden_dims))
+        ])
+        # Top-level batch norms applied after short-cut addition (names: batch_norms.{i})
+        self.batch_norms = nn.ModuleList([
+            nn.BatchNorm1d(node_dims[i + 1])
+            for i in range(len(hidden_dims))
+        ])
+
+    # ── Internal helpers ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _local_idx(atom2batch: torch.Tensor) -> torch.Tensor:
+        """Per-node index within its batch element. Fully vectorised."""
+        order = atom2batch.argsort(stable=True)
+        counts = torch.bincount(atom2batch)
+        # arange within each group
+        local = torch.zeros_like(atom2batch)
+        local[order] = torch.arange(atom2batch.shape[0], device=atom2batch.device) - \
+            torch.repeat_interleave(
+                torch.cat([torch.zeros(1, device=atom2batch.device, dtype=torch.long),
+                           counts.cumsum(0)[:-1]]),
+                counts
+            )[order.argsort(stable=True)]
+        return local
+
+    def _build_edges(
+        self,
+        coords: torch.Tensor,
+        residue_types: torch.Tensor,
+        atom2batch: torch.Tensor,
+        local_idx: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Build edge_index [E, 3] and 59-dim edge features [E, 59]."""
+        device = coords.device
+
+        # ── Sequential edges ─────────────────────────────────────────────────
+        # radius_graph on local sequence position — same trick as NoTrainCAGearNet.
+        # Edges cross batch boundaries are impossible because local_idx resets to 0
+        # per protein, but batch= argument enforces it explicitly.
+        seq_no, seq_ni = radius_graph(
+            local_idx.float(),
+            self._SEQ_MAX_DIST + 0.1,
+            batch=atom2batch,
+            loop=True,
+            max_num_neighbors=2 * self._SEQ_MAX_DIST + 1,
+        )  # returns (row=target, col=source) in source_to_target flow
+        seq_offset = local_idx[seq_no].long() - local_idx[seq_ni].long()
+        seq_rel = (seq_offset + self._SEQ_MAX_DIST).clamp(0, 2 * self._SEQ_MAX_DIST)
+
+        # ── Spatial + KNN edges (single batched cdist) ────────────────────────
+        # Build the full N×N distance matrix then mask out cross-batch pairs.
+        c = coords.float()
+        dist_mat = torch.cdist(c, c)                          # [N, N]
+        cross_batch = atom2batch.unsqueeze(0) != atom2batch.unsqueeze(1)  # [N, N]
+        dist_mat = dist_mat.masked_fill(cross_batch, float("inf"))
+
+        # Sequence distance in global node indices (local_idx handles offsets)
+        seq_dist = (local_idx.unsqueeze(0) - local_idx.unsqueeze(1)).abs()  # [N, N]
+        # Cross-batch pairs get seq_dist=inf so they're excluded by all filters
+        seq_dist = seq_dist.masked_fill(cross_batch, int(1e9))
+
+        # Spatial edges: within radius, seq_dist >= SEQ_MIN_DIST, no self-loops
+        sp_mask = (dist_mat < self._SPATIAL_RADIUS) & (seq_dist >= self._SEQ_MIN_DIST)
+        sp_ni, sp_no = sp_mask.nonzero(as_tuple=True)
+
+        # KNN edges: k nearest by distance, seq_dist >= SEQ_MIN_DIST
+        d_knn = dist_mat.clone()
+        d_knn[seq_dist < self._SEQ_MIN_DIST] = float("inf")
+        n_total = c.shape[0]
+        # topk across all nodes; k capped at (smallest protein size - 1)
+        min_protein_size = int(torch.bincount(atom2batch).min().item())
+        k = min(self._KNN_K, min_protein_size - 1)
+        knn_ni_t: List[torch.Tensor] = []
+        knn_no_t: List[torch.Tensor] = []
+        if k > 0:
+            _, knn_j = d_knn.topk(k, dim=-1, largest=False)       # [N, k]
+            ki = torch.arange(n_total, device=device).unsqueeze(1).expand_as(knn_j).reshape(-1)
+            kj = knn_j.reshape(-1)
+            valid = d_knn[ki, kj] < float("inf")
+            knn_ni_t.append(ki[valid])
+            knn_no_t.append(kj[valid])
+
+        node_in  = torch.cat([seq_ni, sp_ni] + knn_ni_t)
+        node_out = torch.cat([seq_no, sp_no] + knn_no_t)
+        rel = torch.cat([
+            seq_rel,
+            torch.full((sp_ni.shape[0],),  self._SPATIAL_REL, device=device, dtype=torch.long),
+        ] + ([torch.full((knn_ni_t[0].shape[0],), self._KNN_REL, device=device, dtype=torch.long)]
+             if knn_ni_t else []))
+
+        edge_index = torch.stack([node_in, node_out, rel], dim=1)  # [E, 3]
+
+        ni, no = edge_index[:, 0], edge_index[:, 1]
+        rt = edge_index[:, 2]
+        res_i = F.one_hot(residue_types[ni].clamp(0, 20), 21).float()
+        res_j = F.one_hot(residue_types[no].clamp(0, 20), 21).float()
+        rel_oh = F.one_hot(rt, self._NUM_RELATION).float()
+        d = (coords[no].float() - coords[ni].float()).norm(dim=-1)
+        centers = torch.linspace(0, 50, 10, device=device)
+        d_rbf = torch.exp(-0.5 * ((d.unsqueeze(-1) - centers) / 5.0) ** 2)
+        edge_feat = torch.cat([res_i, res_j, rel_oh, d_rbf], dim=-1)  # [E, 59]
+
+        return edge_index, edge_feat
+
+    def _build_line_graph(
+        self,
+        coords: torch.Tensor,
+        edge_index: torch.Tensor,
+    ) -> Tuple[torch.Tensor, int]:
+        device = coords.device
+        n_edges = edge_index.shape[0]
+        ni, no = edge_index[:, 0], edge_index[:, 1]
+
+        if n_edges == 0:
+            return torch.zeros(0, 3, dtype=torch.long, device=device), n_edges
+
+        dirs = F.normalize((coords[no] - coords[ni]).float(), dim=-1, eps=1e-6)
+
+        # Fully vectorised line-graph: pairs (e1, e2) where no[e1] == ni[e2].
+        # Sort both edge lists by the middle node, then use repeat_interleave
+        # to form cartesian products within each group — no Python loops over nodes.
+        e1_order = no.argsort(stable=True)   # e1 sorted by destination
+        e2_order = ni.argsort(stable=True)   # e2 sorted by source
+        e1_keys  = no[e1_order]
+        e2_keys  = ni[e2_order]
+
+        e1_uniq, e1_counts = torch.unique_consecutive(e1_keys, return_counts=True)
+        e2_uniq, e2_counts = torch.unique_consecutive(e2_keys, return_counts=True)
+
+        # Find nodes that appear in both sorted arrays (shared middle nodes)
+        shared_mask_e1 = torch.isin(e1_uniq, e2_uniq)
+        shared_mask_e2 = torch.isin(e2_uniq, e1_uniq)
+        if not shared_mask_e1.any():
+            return torch.zeros(0, 3, dtype=torch.long, device=device), n_edges
+
+        # Counts for shared nodes only
+        s1 = e1_counts[shared_mask_e1]  # [S] e1-edges per shared node
+        s2 = e2_counts[shared_mask_e2]  # [S] e2-edges per shared node
+
+        # Offsets into the sorted e1/e2 arrays for each group
+        e1_starts = (e1_counts.cumsum(0) - e1_counts)[shared_mask_e1]  # [S]
+        e2_starts = (e2_counts.cumsum(0) - e2_counts)[shared_mask_e2]  # [S]
+
+        # Build flat indices into sorted arrays for e1 and e2.
+        # For each shared node k: e1 positions are e1_starts[k]..e1_starts[k]+s1[k]
+        # We expand into a product of size s1[k]*s2[k] using repeat_interleave.
+        # e1: each position repeated s2[k] times; e2: s1[k] positions tiled.
+        e1_rep = torch.repeat_interleave(s2)   # total pairs per e1 edge
+        e2_rep = torch.repeat_interleave(s1)   # total pairs per e2 edge
+
+        # Flat e1 position array: arange within each group, repeated s2[k] times
+        e1_group_idx = torch.repeat_interleave(
+            torch.arange(s1.sum(), device=device),
+            torch.repeat_interleave(s2, s1)
+        )
+        e2_group_idx = torch.arange(s2.sum(), device=device).repeat_interleave(
+            torch.repeat_interleave(s1, s2)
+        )
+
+        # Map group-local positions back to sorted-array positions
+        e1_base = torch.repeat_interleave(e1_starts, s1)  # base offset per e1 edge
+        e2_base = torch.repeat_interleave(e2_starts, s2)  # base offset per e2 edge
+
+        # arange within each e1 group
+        e1_local = torch.arange(s1.sum(), device=device) - torch.repeat_interleave(
+            torch.cat([torch.zeros(1, device=device, dtype=torch.long),
+                       s1.cumsum(0)[:-1]]),
+            s1
+        )
+        e2_local = torch.arange(s2.sum(), device=device) - torch.repeat_interleave(
+            torch.cat([torch.zeros(1, device=device, dtype=torch.long),
+                       s2.cumsum(0)[:-1]]),
+            s2
+        )
+
+        # Sorted-array positions for each edge in the product
+        # e1: each e1 edge appears s2[group] times; e2: each e2 edge appears s1[group] times
+        e1_sorted_pos = (e1_base + e1_local).repeat_interleave(
+            torch.repeat_interleave(s2, s1)
+        )
+        e2_sorted_pos = torch.repeat_interleave(
+            e2_base + e2_local,
+            torch.repeat_interleave(s1, s2)
+        )
+
+        lg_src = e1_order[e1_sorted_pos]
+        lg_dst = e2_order[e2_sorted_pos]
+        cos_a = (dirs[lg_src] * dirs[lg_dst]).sum(dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
+        angle_bin = (torch.acos(cos_a) / math.pi * self._NUM_ANGLE_BIN).long().clamp(0, self._NUM_ANGLE_BIN - 1)
+
+        return torch.stack([lg_src, lg_dst, angle_bin], dim=1), n_edges
+
+    # ── Forward ─────────────────────────────────────────────────────────────
+
+    def forward(
+        self,
+        coords: torch.Tensor,         # [N, 3] CA coords in Angstroms (valid residues only)
+        residue_types: torch.Tensor,  # [N] long, 0-19 = AA, 20 = UNK
+        atom2batch: torch.Tensor,     # [N] long
+    ) -> torch.Tensor:
+        """Returns per-residue embeddings [N, 3072]."""
+        n_nodes = coords.shape[0]
+        local_idx = self._local_idx(atom2batch)
+
+        # Node features: 21-dim residue one-hot (no initial linear projection)
+        h_v = F.one_hot(residue_types.clamp(0, 20), 21).float()
+
+        edge_index, edge_feat59 = self._build_edges(coords, residue_types, atom2batch, local_idx)
+        ni, no, rel = edge_index[:, 0], edge_index[:, 1], edge_index[:, 2]
+
+        lg_ei, n_lg_nodes = self._build_line_graph(coords, edge_index)
+        lg_ni, lg_no, lg_rel = lg_ei[:, 0], lg_ei[:, 1], lg_ei[:, 2]
+
+        edge_hidden = edge_feat59  # [E, 59] initial edge features
+
+        hiddens: List[torch.Tensor] = []
+        for layer, edge_layer, bn in zip(self.layers, self.edge_layers, self.batch_norms):
+            # 1. Update edge features via line graph
+            edge_hidden = edge_layer(edge_hidden, lg_ni, lg_no, lg_rel, n_lg_nodes)
+            # 2. Node conv with updated edge context; layer() already applies BN+ReLU
+            h_new = layer(h_v, ni, no, rel, n_nodes, edge_input=edge_hidden)
+            # 3. Short-cut residual (only valid when dims match, i.e. layer 1+)
+            if h_new.shape == h_v.shape:
+                h_new = h_new + h_v
+            # 4. Top-level batch norm
+            h_new = bn(h_new)
+            hiddens.append(h_new)
+            h_v = h_new
+
+        return torch.cat(hiddens, dim=-1)  # [N, 3072]
+
+
+class NoTrainMCGearNetEdge(GearNetEdge):
+    """Frozen GearNetEdge loaded from mc_gearnet_edge.pth (Zenodo 7593637).
+
+    Download the checkpoint with:
+        hpc-scripts/proteina/data_prep/fetch_mc_gearnet_edge.sh
+    """
+
+    def __init__(self, ckpt_path: str):
+        super().__init__()
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(
+                f"MC-GearNet-Edge checkpoint not found: {ckpt_path!r}. "
+                "Run hpc-scripts/proteina/data_prep/fetch_mc_gearnet_edge.sh to download it."
+            )
+        state = torch.load(ckpt_path, map_location="cpu")
+        missing, unexpected = self.load_state_dict(state, strict=False)
+        if missing:
+            raise RuntimeError(
+                f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
+                f"First missing key: {missing[0]!r} ({len(missing)} total)"
+            )
+        self.eval()
+        for p in self.parameters():
+            p.requires_grad_(False)
+
+    def train(self, mode: bool = True) -> "NoTrainMCGearNetEdge":
         return super().train(False)
 
 

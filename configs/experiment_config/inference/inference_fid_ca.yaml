@@ -13,7 +13,7 @@ step_len: 5
 nsamples_per_len: 125 # 250
 
 # Maximum number of samples in each batch
-max_nsamples: 8 # 64
+generation_batch_size: 8 # 64
 
 # Designability
 compute_designability: False

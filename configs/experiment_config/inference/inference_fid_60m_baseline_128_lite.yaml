@@ -14,4 +14,4 @@ min_len:
 max_len:
 step_len:
 nsamples_per_len: 200
-max_nsamples: 320
+generation_batch_size: 320

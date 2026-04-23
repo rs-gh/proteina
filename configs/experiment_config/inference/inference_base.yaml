@@ -16,7 +16,7 @@ step_len:
 nsamples_per_len: 100
 
 # Maximum number of samples in each batch
-max_nsamples: 5
+generation_batch_size: 5
 
 # Sampling
 dt: 0.0025

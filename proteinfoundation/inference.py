@@ -297,7 +297,7 @@ if __name__ == "__main__":
     # Create length dataset
     nlens_dict = parse_nlens_cfg(cfg)
     lens_sample, nsamples = split_nlens(
-        nlens_dict, max_nsamples=cfg.max_nsamples, n_replica=1
+        nlens_dict, max_nsamples=cfg.generation_batch_size, n_replica=1
     )  # Assume running on 1 GPU
     if cfg.fold_cond:
         len_cath_codes = parse_len_cath_code(cfg)

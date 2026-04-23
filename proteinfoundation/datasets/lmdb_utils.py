@@ -143,6 +143,7 @@ def process_raw_to_lmdb(
     store_bfactor: bool = True,
     map_size_gb: int = 50,
     num_workers: int = 0,
+    max_residues: Optional[int] = None,
 ) -> int:
     """Process raw structure files directly into LMDB.
 
@@ -167,6 +168,7 @@ def process_raw_to_lmdb(
         store_bfactor: Whether to store B-factors.
         map_size_gb: Maximum LMDB map size in GB.
         num_workers: Number of parallel workers for CIF parsing (0 = single-threaded).
+        max_residues: If set, skip structures with more than this many residues.
 
     Returns:
         Number of NEW samples written in this call.
@@ -215,6 +217,7 @@ def process_raw_to_lmdb(
 
     n_written = 0
     n_failed = 0
+    n_filtered = 0
 
     # Build worker args
     worker_args = [
@@ -264,6 +267,13 @@ def process_raw_to_lmdb(
 
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
+    def _accept(pickled: bytes) -> bool:
+        """Return False if the graph exceeds max_residues."""
+        if max_residues is None:
+            return True
+        graph = pickle.loads(pickled)
+        return graph.num_nodes <= max_residues
+
     if num_workers > 0:
         # Parallel: parse CIF in workers, write LMDB in main process
         with multiprocessing.Pool(num_workers) as pool:
@@ -275,6 +285,9 @@ def process_raw_to_lmdb(
                 if _sigterm_received:
                     break
                 if pickled is not None:
+                    if not _accept(pickled):
+                        n_filtered += 1
+                        continue
                     batch.append(pickled)
                     batch_ids.append(protein_id)
                     if len(batch) >= BATCH_SIZE:
@@ -283,6 +296,7 @@ def process_raw_to_lmdb(
                         logger.info(
                             f"Committed batch: {n_written} new / "
                             f"{len(all_ids)} total"
+                            + (f" / {n_filtered} filtered" if max_residues else "")
                         )
                         batch = []
                         batch_ids = []
@@ -295,6 +309,9 @@ def process_raw_to_lmdb(
                 break
             protein_id, pickled = _parse_one_structure(args)
             if pickled is not None:
+                if not _accept(pickled):
+                    n_filtered += 1
+                    continue
                 batch.append(pickled)
                 batch_ids.append(protein_id)
                 if len(batch) >= BATCH_SIZE:
@@ -303,6 +320,7 @@ def process_raw_to_lmdb(
                     logger.info(
                         f"Committed batch: {n_written} new / "
                         f"{len(all_ids)} total"
+                        + (f" / {n_filtered} filtered" if max_residues else "")
                     )
                     batch = []
                     batch_ids = []
@@ -320,7 +338,264 @@ def process_raw_to_lmdb(
     logger.info(
         f"LMDB: {output_path} — "
         f"{n_written} new, {len(existing_ids)} existing, {n_failed} failed, "
-        f"{total} total entries"
+        + (f"{n_filtered} filtered (>{max_residues} res), " if max_residues else "")
+        + f"{total} total entries"
+    )
+    return n_written
+
+
+def _parse_pdb_bytes(args):
+    """Parse raw PDB bytes into a pickled PyG Data graph.
+
+    Writes bytes to a NamedTemporaryFile, parses it, deletes the file.
+    Returns (protein_id, pickled_bytes) on success, (protein_id, None) on failure.
+    Used by process_tar_to_lmdb for tar-streaming builds.
+    """
+    import gzip
+    import tempfile
+
+    pdb_bytes, protein_id, store_het, store_bfactor, apply_coord_reorder = args
+
+    tmp_path = None
+    try:
+        from graphein_utils.graphein_utils import protein_to_pyg
+        from openfold.np.residue_constants import resname_to_idx
+
+        # AFDB tars contain .pdb.gz members — decompress if gzip magic present.
+        if pdb_bytes[:2] == b"\x1f\x8b":
+            pdb_bytes = gzip.decompress(pdb_bytes)
+
+        with tempfile.NamedTemporaryFile(suffix=".pdb", delete=False) as f:
+            f.write(pdb_bytes)
+            tmp_path = f.name
+
+        fill_value_coords = 1e-5
+        graph = protein_to_pyg(
+            path=tmp_path,
+            chain_selection="all",
+            keep_insertions=True,
+            store_het=store_het,
+            store_bfactor=store_bfactor,
+            fill_value_coords=fill_value_coords,
+        )
+
+        # graphein doesn't set num_nodes explicitly — PyG can't infer it from
+        # non-standard attributes like coords/residues. Set it from coords shape.
+        graph.num_nodes = graph.coords.shape[0]
+
+        if graph.num_nodes == 0:
+            logger.warning(f"Empty graph for {protein_id} (0 residues)")
+            return (protein_id, None)
+
+        graph.id = protein_id
+        coord_mask = graph.coords != fill_value_coords
+        graph.coord_mask = coord_mask[..., 0]
+        graph.residue_type = torch.tensor(
+            [resname_to_idx[r] for r in graph.residues]
+        ).long()
+        graph.database = "pdb"
+        graph.bfactor_avg = torch.mean(graph.bfactor, dim=-1)
+        graph.residue_pdb_idx = torch.tensor(
+            [int(s.split(":")[2]) for s in graph.residue_id],
+            dtype=torch.long,
+        )
+        graph.seq_pos = torch.arange(graph.coords.shape[0]).unsqueeze(-1)
+
+        if apply_coord_reorder:
+            graph.coords = graph.coords[:, PDB_TO_OPENFOLD_INDEX_TENSOR, :]
+            graph.coord_mask = graph.coord_mask[:, PDB_TO_OPENFOLD_INDEX_TENSOR]
+
+        return (protein_id, pickle.dumps(graph))
+
+    except Exception as e:
+        logger.warning(f"Failed to parse {protein_id}: {e}")
+        return (protein_id, None)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def process_tar_to_lmdb(
+    tar_path: str,
+    output_path: str,
+    protein_ids: List[str],
+    max_residues: Optional[int] = None,
+    store_het: bool = False,
+    store_bfactor: bool = True,
+    apply_coord_reorder: bool = True,
+    map_size_gb: int = 50,
+    num_workers: int = 0,
+    batch_size: int = 500,
+) -> int:
+    """Stream PDB files directly from a tar archive into LMDB.
+
+    Never extracts files to disk — each member is read into memory, written to
+    a NamedTemporaryFile for parsing, then immediately deleted. At most
+    num_workers temp files exist simultaneously.
+
+    Supports incremental builds: re-running skips structures already in LMDB
+    (matched by protein_id). Commits every batch_size entries so progress is
+    preserved if the job is killed.
+
+    Args:
+        tar_path: Path to the .tar file.
+        output_path: Path for the output .lmdb file.
+        protein_ids: Set of protein IDs to include from the tar.
+        max_residues: If set, skip structures with more residues than this.
+        store_het: Whether to store heteroatoms.
+        store_bfactor: Whether to store B-factors (pLDDT for AFDB).
+        apply_coord_reorder: Apply PDB->OpenFold coordinate reordering.
+        map_size_gb: Maximum LMDB map size in GB.
+        num_workers: Parallel workers for parsing (0 = single-threaded).
+        batch_size: Commit to LMDB every this many entries.
+
+    Returns:
+        Number of NEW samples written in this call.
+    """
+    import tarfile
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+
+    is_existing = os.path.exists(output_path)
+    db = lmdb.open(
+        output_path,
+        map_size=map_size_gb * (1024 ** 3),
+        create=True,
+        subdir=False,
+        readonly=False,
+        lock=True,
+        readahead=False,
+        meminit=False,
+    )
+
+    existing_ids = set()
+    next_key = 0
+    if is_existing:
+        existing_ids = _get_existing_ids(db)
+        next_key = _get_next_key(db)
+        if existing_ids:
+            logger.info(
+                f"Existing LMDB has {len(existing_ids)} entries, "
+                f"appending new ones (next key: {next_key})"
+            )
+
+    target_ids = set(protein_ids) - existing_ids
+    logger.info(
+        f"Tar: {len(protein_ids)} target IDs, "
+        f"{len(existing_ids)} already done, "
+        f"{len(target_ids)} to process"
+    )
+
+    n_written = 0
+    n_failed = 0
+    n_filtered = 0
+    n_skipped = 0
+    all_ids = set(existing_ids)
+
+    def _write_batch(batch, batch_ids, start_key):
+        all_ids.update(batch_ids)
+        with db.begin(write=True) as txn:
+            for i, pickled in enumerate(batch):
+                txn.put(key=str(start_key + i).encode(), value=pickled)
+            txn.put(_IDS_META_KEY, pickle.dumps(all_ids))
+
+    batch = []
+    batch_ids = []
+
+    _sigterm_received = False
+
+    def _sigterm_handler(signum, frame):
+        nonlocal _sigterm_received, batch, batch_ids, n_written
+        _sigterm_received = True
+        if batch:
+            logger.info(f"SIGTERM — flushing {len(batch)} buffered entries...")
+            _write_batch(batch, batch_ids, next_key + n_written)
+            n_written += len(batch)
+            batch = []
+            batch_ids = []
+        logger.info(f"Graceful shutdown: {n_written} new, {len(all_ids)} total in LMDB")
+        db.close()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
+    def _accept(pickled: bytes) -> bool:
+        if max_residues is None:
+            return True
+        graph = pickle.loads(pickled)
+        return (graph.num_nodes or 0) <= max_residues
+
+    def _result_to_lmdb(protein_id, pickled):
+        """Handle one parsed result — filter, batch, commit."""
+        nonlocal n_written, n_failed, n_filtered, batch, batch_ids
+        if pickled is None:
+            n_failed += 1
+            return
+        if not _accept(pickled):
+            n_filtered += 1
+            return
+        batch.append(pickled)
+        batch_ids.append(protein_id)
+        if len(batch) >= batch_size:
+            _write_batch(batch, batch_ids, next_key + n_written)
+            n_written += len(batch)
+            logger.info(
+                f"Committed: {n_written} new / {len(all_ids)} total"
+                + (f" / {n_filtered} filtered" if max_residues else "")
+                + f" / {n_failed} failed"
+            )
+            batch.clear()
+            batch_ids.clear()
+
+    # Build a generator that yields (pdb_bytes, protein_id, ...) for each
+    # unprocessed member in the tar whose stem is in target_ids.
+    # Uses streaming mode ("r|*") — reads tar sequentially without seeking.
+    def _tar_items():
+        with tarfile.open(tar_path, "r|*") as tar:
+            for member in tar:
+                if _sigterm_received:
+                    return
+                if not member.isfile():
+                    continue
+                stem = os.path.splitext(os.path.basename(member.name))[0]
+                if stem not in target_ids:
+                    continue  # not in our split — tar still reads past the data block
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                pdb_bytes = f.read()
+                yield (pdb_bytes, stem, store_het, store_bfactor, apply_coord_reorder)
+
+    if num_workers > 0:
+        with multiprocessing.Pool(num_workers) as pool:
+            for protein_id, pickled in tqdm(
+                pool.imap_unordered(_parse_pdb_bytes, _tar_items(), chunksize=8),
+                desc="Streaming tar → LMDB",
+                unit="proteins",
+            ):
+                if _sigterm_received:
+                    break
+                _result_to_lmdb(protein_id, pickled)
+    else:
+        for args in tqdm(_tar_items(), desc="Streaming tar → LMDB", unit="proteins"):
+            if _sigterm_received:
+                break
+            protein_id, pickled = _parse_pdb_bytes(args)
+            _result_to_lmdb(protein_id, pickled)
+
+    # Flush remaining
+    if batch:
+        _write_batch(batch, batch_ids, next_key + n_written)
+        n_written += len(batch)
+
+    db.close()
+
+    total = next_key + n_written
+    logger.info(
+        f"LMDB: {output_path} — "
+        f"{n_written} new, {len(existing_ids)} existing, {n_failed} failed, "
+        + (f"{n_filtered} filtered (>{max_residues} res), " if max_residues else "")
+        + f"{total} total entries"
     )
     return n_written
 

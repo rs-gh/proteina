@@ -376,6 +376,17 @@ if __name__ == "__main__":
         log_info(f"Compiling model.nn with torch.compile (mode=default, dynamic={dyn})")
         model.nn = torch.compile(model.nn, dynamic=dyn)
 
+        # Also compile the REPA encoder if present. Always dynamic=True: GearNet
+        # graph construction (radius_graph, unique_consecutive, repeat_interleave)
+        # produces data-dependent shapes that change with sequence length / batch
+        # composition. fullgraph=False allows graph breaks at Python control flow
+        # in the compat shim so the GNN layers still get fused.
+        if hasattr(model, "repa_loss") and hasattr(model.repa_loss, "encoder"):
+            log_info("Compiling repa_loss.encoder with torch.compile (dynamic=True, fullgraph=False)")
+            model.repa_loss.encoder = torch.compile(
+                model.repa_loss.encoder, dynamic=True, fullgraph=False
+            )
+
     # Train
     plugins = []
     show_prog_bar = args.show_prog_bar

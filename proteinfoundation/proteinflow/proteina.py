@@ -256,7 +256,10 @@ class Proteina(ModelTrainerBase):
         dist_mat_loss = torch.sum(
             (gt_pair_dists - pred_pair_dists) ** 2 * total_pair_mask, dim=(-1, -2)
         )  # [*]
-        dist_mat_loss = dist_mat_loss / den  # [*]
+        # Guard against den=0 (can happen for tight `thres_aux_2d_loss` when the
+        # only pairs under threshold are diagonals — numerator is then 0 too, so
+        # the safe fallback is 0/1 = 0). Without clamp this produces 0/0 = NaN.
+        dist_mat_loss = dist_mat_loss / den.clamp(min=1.0)  # [*]
 
         # Distogram loss
         num_dist_buckets = self.cfg_exp.loss.get("num_dist_buckets", 64)
@@ -276,14 +279,25 @@ class Proteina(ModelTrainerBase):
                 gt_pair_dists, boundaries
             )  # [*, n, n], each value in [0, num_dist_buckets)
 
-            # Distogram loss
-            pair_pred = pair_pred.view(bs * n * n, num_dist_buckets)
-            gt_pair_dist_bucket = gt_pair_dist_bucket.view(bs * n * n)
-            distogram_loss = torch.nn.functional.cross_entropy(
-                pair_pred, gt_pair_dist_bucket, reduction="none"
-            )  # [bs * n * n]
+            # Distogram loss — gather real pairs BEFORE cross_entropy so padded
+            # positions never enter the graph. Masking after CE (as before) is
+            # unsafe under bf16 because (a) CE can produce NaN/Inf on extreme
+            # logits at padded positions, and (b) even if we mask them out in
+            # the forward, autograd's `0 * NaN = NaN` corrupts the gradient.
+            # Padded positions contribute nothing to the normalized per-sample
+            # mean either way, so this is a strict numerical upgrade.
+            pair_pred_flat = pair_pred.view(bs * n * n, num_dist_buckets)
+            gt_bucket_flat = gt_pair_dist_bucket.view(bs * n * n)
+            pair_mask_flat = pair_mask.view(bs * n * n).bool()
+            ce_real = torch.nn.functional.cross_entropy(
+                pair_pred_flat[pair_mask_flat],
+                gt_bucket_flat[pair_mask_flat],
+                reduction="none",
+            )  # [n_real_total]
+            distogram_loss = pair_pred.new_zeros(bs * n * n)
+            distogram_loss[pair_mask_flat] = ce_real
             distogram_loss = distogram_loss.view(bs, n, n)
-            distogram_loss = torch.sum(distogram_loss * pair_mask, dim=(-1, -2))  # [*]
+            distogram_loss = torch.sum(distogram_loss, dim=(-1, -2))  # [*]
             distogram_loss = distogram_loss / (
                 pair_mask.sum(dim=(-1, -2)) + 1e-10
             )  # [*]

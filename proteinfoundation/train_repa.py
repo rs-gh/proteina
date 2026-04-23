@@ -115,6 +115,17 @@ if __name__ == "__main__":
         default=-1,
         help="Lightning Trainer max_steps. -1 (default) means unlimited; use a small value (e.g. 100) for smoke runs.",
     )
+    parser.add_argument(
+        "--no_compile",
+        action="store_true",
+        help="Disable torch.compile regardless of config (useful for smoke tests).",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=None,
+        help="Override datamodule batch_size (useful for OOM debugging / memory sweeps).",
+    )
     args = parser.parse_args()
 
     logger.add(
@@ -200,6 +211,9 @@ if __name__ == "__main__":
     with hydra.initialize(config_path, version_base=hydra.__version__):
         cfg_data = hydra.compose(config_name=cfg_exp["dataset"])
         cfg_data.datamodule.num_workers = min(num_cpus, cfg_data.datamodule.num_workers)
+        if args.batch_size is not None:
+            cfg_data.datamodule.batch_size = args.batch_size
+            log_info(f"Overriding batch_size to {args.batch_size}")
         if cfg_data.get("exclude_id_pkl_path") is not None:
             with open(cfg_data.exclude_id_pkl_path, "rb") as fin:
                 exclude_ids = pickle.load(fin)
@@ -341,7 +355,7 @@ if __name__ == "__main__":
         model.load_state_dict(ckpt["state_dict"], strict=False)
 
     # torch.compile for faster training (requires constant tensor shapes via PaddingTransform)
-    if cfg_exp.get("compile", False):
+    if cfg_exp.get("compile", False) and not args.no_compile:
         # Length-bucketed training sees a small, fixed set of (B, N) shapes (one per
         # bucket). Force dynamic=False so each bucket gets its own static graph
         # instead of Dynamo's automatic_dynamic path, which switches to symbolic

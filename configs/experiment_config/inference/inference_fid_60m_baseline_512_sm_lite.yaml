@@ -8,7 +8,17 @@ run_name_: eval_60m_baseline_512_sm_lite
 ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_baseline_v2/checkpoints
 ckpt_name: last-EMA.ckpt  # overridden at sweep-time to step 500K (3.0M samples @ bs=6)
 
-# n=512 eval: 200 samples at the training cap length
+# n=512 eval: 200 samples at the training cap length.
+#
+# Batch=20 divides 200 cleanly (10 batches × 20 = 200 exactly), so no tail
+# rounding. Batch size kept small to fit 512-residue structures in A100 VRAM
+# during flow-matching inference (VRAM scales quadratically in nres).
+#
+# Wall time per checkpoint (A100, fast-inference=on):
+#   generation + FID/fJSD/fS: ~12-13 min (10 batches, compile amortizes)
+#   + designability (N=100, 800 ESMFold forwards): ~70-90 min (estimate;
+#     tasks 8-11 still in queue as of 2026-04-24)
+# Total per run: ~85-105 min. Full n=512_sm sweep (4 runs): ~6-7 GPU-hours.
 nres_lens: [512]
 min_len:
 max_len:

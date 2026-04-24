@@ -8,7 +8,19 @@ run_name_: eval_60m_baseline_256_lite
 ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_baseline_256/checkpoints
 ckpt_name: last-EMA.ckpt
 
-# n=256 eval: 200 samples at the training cap length
+# n=256 eval: 200 samples at the training cap length.
+#
+# ⚠ Batch=80 does NOT divide nsamples_per_len=200 (200 % 80 = 40).
+# split_nlens in evaluate.py rounds the final partial batch UP for torch.compile
+# static-shape reasons, so we actually generate 240 PDBs, not 200. FID/fS use
+# all 240; designability subsamples 100 so is unaffected.
+# To get exactly 200: use generation_batch_size: 100 (divides cleanly, 2 batches).
+#
+# Wall time per checkpoint (A100, fast-inference=on):
+#   generation + FID/fJSD/fS: ~4.5-5 min
+#   + designability (N=100, 800 ESMFold forwards): ~70 min (ESMFold scales
+#     ~quadratic in seq length; n=256 is ~2x n=128 wall)
+# Total per run: ~75 min. Full n=256 sweep (4 runs): ~5 GPU-hours.
 nres_lens: [256]
 min_len:
 max_len:

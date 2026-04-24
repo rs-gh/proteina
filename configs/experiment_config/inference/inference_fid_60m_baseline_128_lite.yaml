@@ -8,7 +8,16 @@ run_name_: eval_60m_baseline_128_lite
 ckpt_path: /rds/user/sr2173/hpc-work/proteina/store/proteina_60m_baseline_128/checkpoints
 ckpt_name: last-EMA.ckpt
 
-# n=128 eval: 200 samples at the training cap length
+# n=128 eval: 200 samples at the training cap length.
+#
+# Batch=320 > samples=200 → single batch, one torch.compile, no tail-batch
+# rounding (see split_nlens in evaluate.py). 200 % 320 is irrelevant since
+# we never hit a second batch. Keep batch >= nsamples_per_len for n=128.
+#
+# Wall time per checkpoint (A100, fast-inference=on):
+#   generation + FID/fJSD/fS: ~2-4 min
+#   + designability (N=100, 800 ESMFold forwards): ~30-40 min
+# Total per run: ~35 min. Full n=128 sweep (4 runs): ~2.3 GPU-hours.
 nres_lens: [128]
 min_len:
 max_len:

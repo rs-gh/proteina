@@ -58,9 +58,9 @@ class ProteinaREPALoss(nn.Module):
             projectors: One projector per aligned layer (trainable).
             repa_layers: Which transformer layers are being aligned.
             lambda_repa: REPA loss weight.
-            combination_mode: "additive" (fm + λ*repa) or "tradeoff" ((1-λ)*fm + λ*repa).
+            combination_mode: "additive" (fm + lambda*repa) or "tradeoff" ((1-lambda)*fm + lambda*repa).
             similarity_type: "cosine" or "mse".
-            averaging: "per_residue" (project default — global mean over all unmasked residues)
+            averaging: "per_residue" (project default - global mean over all unmasked residues)
                 or "per_sample" (each protein contributes equally regardless of length).
                 Note: the reference REPA paper averages per-patch, which equals per-sample only
                 when every image has the same number of patches. In variable-length domains the
@@ -128,7 +128,7 @@ class ProteinaREPALoss(nn.Module):
             x_1_nm: [b, n, 3] clean CA coordinates in nm.
             mask: [b, n] boolean residue mask.
             residue_type: Optional [b, n] long tensor of amino-acid indices (0..20;
-                padded positions may be -1 — encoders handle padding via ``mask``).
+                padded positions may be -1 - encoders handle padding via ``mask``).
                 Required by sequence-based encoders (ESM), ignored by others.
 
         Returns:

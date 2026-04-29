@@ -252,7 +252,7 @@ def process_raw_to_lmdb(
         _sigterm_received = True
         if batch:
             logger.info(
-                f"SIGTERM received — flushing {len(batch)} buffered entries..."
+                f"SIGTERM received - flushing {len(batch)} buffered entries..."
             )
             _write_batch(db, batch, batch_ids, next_key + n_written)
             n_written += len(batch)
@@ -280,7 +280,7 @@ def process_raw_to_lmdb(
             for protein_id, pickled in tqdm(
                 pool.imap_unordered(_parse_one_structure, worker_args, chunksize=32),
                 total=len(worker_args),
-                desc="Processing → LMDB",
+                desc="Processing -> LMDB",
             ):
                 if _sigterm_received:
                     break
@@ -304,7 +304,7 @@ def process_raw_to_lmdb(
                     n_failed += 1
     else:
         # Single-threaded fallback
-        for args in tqdm(worker_args, desc="Processing → LMDB"):
+        for args in tqdm(worker_args, desc="Processing -> LMDB"):
             if _sigterm_received:
                 break
             protein_id, pickled = _parse_one_structure(args)
@@ -336,7 +336,7 @@ def process_raw_to_lmdb(
 
     total = next_key + n_written
     logger.info(
-        f"LMDB: {output_path} — "
+        f"LMDB: {output_path} - "
         f"{n_written} new, {len(existing_ids)} existing, {n_failed} failed, "
         + (f"{n_filtered} filtered (>{max_residues} res), " if max_residues else "")
         + f"{total} total entries"
@@ -361,7 +361,7 @@ def _parse_pdb_bytes(args):
         from graphein_utils.graphein_utils import protein_to_pyg
         from openfold.np.residue_constants import resname_to_idx
 
-        # AFDB tars contain .pdb.gz members — decompress if gzip magic present.
+        # AFDB tars contain .pdb.gz members - decompress if gzip magic present.
         if pdb_bytes[:2] == b"\x1f\x8b":
             pdb_bytes = gzip.decompress(pdb_bytes)
 
@@ -379,7 +379,7 @@ def _parse_pdb_bytes(args):
             fill_value_coords=fill_value_coords,
         )
 
-        # graphein doesn't set num_nodes explicitly — PyG can't infer it from
+        # graphein doesn't set num_nodes explicitly - PyG can't infer it from
         # non-standard attributes like coords/residues. Set it from coords shape.
         graph.num_nodes = graph.coords.shape[0]
 
@@ -429,7 +429,7 @@ def process_tar_to_lmdb(
 ) -> int:
     """Stream PDB files directly from a tar archive into LMDB.
 
-    Never extracts files to disk — each member is read into memory, written to
+    Never extracts files to disk - each member is read into memory, written to
     a NamedTemporaryFile for parsing, then immediately deleted. At most
     num_workers temp files exist simultaneously.
 
@@ -508,7 +508,7 @@ def process_tar_to_lmdb(
         nonlocal _sigterm_received, batch, batch_ids, n_written
         _sigterm_received = True
         if batch:
-            logger.info(f"SIGTERM — flushing {len(batch)} buffered entries...")
+            logger.info(f"SIGTERM - flushing {len(batch)} buffered entries...")
             _write_batch(batch, batch_ids, next_key + n_written)
             n_written += len(batch)
             batch = []
@@ -526,7 +526,7 @@ def process_tar_to_lmdb(
         return (graph.num_nodes or 0) <= max_residues
 
     def _result_to_lmdb(protein_id, pickled):
-        """Handle one parsed result — filter, batch, commit."""
+        """Handle one parsed result - filter, batch, commit."""
         nonlocal n_written, n_failed, n_filtered, batch, batch_ids
         if pickled is None:
             n_failed += 1
@@ -549,7 +549,7 @@ def process_tar_to_lmdb(
 
     # Build a generator that yields (pdb_bytes, protein_id, ...) for each
     # unprocessed member in the tar whose stem is in target_ids.
-    # Uses streaming mode ("r|*") — reads tar sequentially without seeking.
+    # Uses streaming mode ("r|*") - reads tar sequentially without seeking.
     def _tar_items():
         with tarfile.open(tar_path, "r|*") as tar:
             for member in tar:
@@ -559,7 +559,7 @@ def process_tar_to_lmdb(
                     continue
                 stem = os.path.splitext(os.path.basename(member.name))[0]
                 if stem not in target_ids:
-                    continue  # not in our split — tar still reads past the data block
+                    continue  # not in our split - tar still reads past the data block
                 f = tar.extractfile(member)
                 if f is None:
                     continue
@@ -570,14 +570,14 @@ def process_tar_to_lmdb(
         with multiprocessing.Pool(num_workers) as pool:
             for protein_id, pickled in tqdm(
                 pool.imap_unordered(_parse_pdb_bytes, _tar_items(), chunksize=8),
-                desc="Streaming tar → LMDB",
+                desc="Streaming tar -> LMDB",
                 unit="proteins",
             ):
                 if _sigterm_received:
                     break
                 _result_to_lmdb(protein_id, pickled)
     else:
-        for args in tqdm(_tar_items(), desc="Streaming tar → LMDB", unit="proteins"):
+        for args in tqdm(_tar_items(), desc="Streaming tar -> LMDB", unit="proteins"):
             if _sigterm_received:
                 break
             protein_id, pickled = _parse_pdb_bytes(args)
@@ -592,7 +592,7 @@ def process_tar_to_lmdb(
 
     total = next_key + n_written
     logger.info(
-        f"LMDB: {output_path} — "
+        f"LMDB: {output_path} - "
         f"{n_written} new, {len(existing_ids)} existing, {n_failed} failed, "
         + (f"{n_filtered} filtered (>{max_residues} res), " if max_residues else "")
         + f"{total} total entries"
@@ -616,7 +616,7 @@ def convert_pt_to_lmdb(
         processed_dir: Directory containing {name}.pt files.
         file_names: List of file basenames (without .pt extension).
         output_path: Path for the output .lmdb file.
-        apply_coord_reorder: Apply PDB→OpenFold coordinate reordering.
+        apply_coord_reorder: Apply PDB->OpenFold coordinate reordering.
         map_size_gb: Maximum LMDB map size in GB.
 
     Returns:
@@ -679,7 +679,7 @@ def convert_pt_to_lmdb(
 
     total = next_key + n_written
     logger.info(
-        f"LMDB: {output_path} — "
+        f"LMDB: {output_path} - "
         f"{n_written} new, {len(existing_ids)} existing, {n_skipped} skipped, "
         f"{total} total"
     )

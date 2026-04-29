@@ -257,7 +257,7 @@ class Proteina(ModelTrainerBase):
             (gt_pair_dists - pred_pair_dists) ** 2 * total_pair_mask, dim=(-1, -2)
         )  # [*]
         # Guard against den=0 (can happen for tight `thres_aux_2d_loss` when the
-        # only pairs under threshold are diagonals — numerator is then 0 too, so
+        # only pairs under threshold are diagonals - numerator is then 0 too, so
         # the safe fallback is 0/1 = 0). Without clamp this produces 0/0 = NaN.
         dist_mat_loss = dist_mat_loss / den.clamp(min=1.0)  # [*]
 
@@ -279,7 +279,7 @@ class Proteina(ModelTrainerBase):
                 gt_pair_dists, boundaries
             )  # [*, n, n], each value in [0, num_dist_buckets)
 
-            # Distogram loss — gather real pairs BEFORE cross_entropy so padded
+            # Distogram loss - gather real pairs BEFORE cross_entropy so padded
             # positions never enter the graph. Masking after CE (as before) is
             # unsafe under bf16 because (a) CE can produce NaN/Inf on extreme
             # logits at padded positions, and (b) even if we mask them out in

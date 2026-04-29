@@ -18,23 +18,23 @@ nm_to_ang = lambda trans: trans * nm_to_ang_scale
 
 def trans_nm_to_atom37(ca_coors_nm):
     """
-    Converts CA positions (in nm) into atom37 representation (in Å).
+    Converts CA positions (in nm) into atom37 representation (in A).
 
     Args:
         ca_coors: CA coordinates in nm, shape [*, N, 3]
 
     Returns:
-        Coordinates in atom37 representation (in Å)
+        Coordinates in atom37 representation (in A)
     """
     return trans_ang_to_atom37(nm_to_ang(ca_coors_nm))
 
 
 def trans_ang_to_atom37(ca_coors):
     """
-    Converts CA positions (in Å) into atom37 representation.
+    Converts CA positions (in A) into atom37 representation.
 
     Args:
-        ca_coors: CA coordinates in Å, shape [*, N, 3]
+        ca_coors: CA coordinates in A, shape [*, N, 3]
 
     Returns:
         Coordinates in atom37 representation

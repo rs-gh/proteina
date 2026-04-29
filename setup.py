@@ -36,7 +36,7 @@ setup(
           "loralib",
           "biopython",
           "biotite>=1.0,<2.0",
-          # NOTE: mmseqs2 is bioconda-only — install separately
+          # NOTE: mmseqs2 is bioconda-only - install separately
           # e.g. via: conda install -c bioconda mmseqs2, or an HPC module
       ],
 )

@@ -10,7 +10,7 @@ This callback equalizes effective BS across buckets by mutating
 
     accum[b] = round(target_effective_bs / bucket_batch_sizes[b])
 
-so that `accum[b] * bucket_batch_sizes[b] ≈ target_effective_bs` for every
+so that `accum[b] * bucket_batch_sizes[b] ~= target_effective_bs` for every
 bucket. The collator tags each batch with `batch.bucket_length` (set by
 `dense_padded_from_data_list` when `bucket_boundaries` is provided); the
 callback looks up the accum value via that tag.

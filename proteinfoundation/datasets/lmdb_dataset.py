@@ -152,7 +152,7 @@ class ProteinLMDBDataset(Dataset):
     def get_lengths(self) -> np.ndarray:
         """Per-sample lengths aligned with dataset indexing (required by
         LengthBucketedBatchSampler). Raises if the dataset was constructed
-        without `max_num_residues` — in that case the filtered key list is
+        without `max_num_residues` - in that case the filtered key list is
         not built and no length index has been loaded.
         """
         if self._filtered_lengths is None:
@@ -178,7 +178,7 @@ class ProteinLMDBDataset(Dataset):
             # Use pre-filtered keys
             self._keys = self._filtered_keys
         else:
-            # No filtering — use all keys
+            # No filtering - use all keys
             with self._db.begin() as txn:
                 self._keys = list(txn.cursor().iternext(values=False))
 

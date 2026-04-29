@@ -501,7 +501,7 @@ class PDBLightningDataModule(BaseLightningDataModule):
 
     def prepare_data(self):
         if self.lmdb_dir is not None:
-            logger.info("Using LMDB — skipping prepare_data (CSV/processing not needed)")
+            logger.info("Using LMDB - skipping prepare_data (CSV/processing not needed)")
             return
 
         if self.dataselector:

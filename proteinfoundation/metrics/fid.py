@@ -61,7 +61,7 @@ class ProteinFrechetInceptionDistance(Metric):
         **kwargs: Any,
     ) -> None:
         """
-        Calculate Protein Fréchet inception distance (FID) which is used to access the similarity between two protein structure distribution.
+        Calculate Protein Frechet inception distance (FID) which is used to access the similarity between two protein structure distribution.
 
         Args:
             num_features (int): Feature dimensions.

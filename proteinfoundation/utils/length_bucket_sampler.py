@@ -3,7 +3,7 @@
 Groups dataset indices into buckets by protein length, then yields
 fixed-size batches drawn from within a single bucket. Each batch is
 length-homogeneous, so the collator can pad to `bucket_max` rather than a
-global `max_size` — cutting attention FLOP-waste by removing the large gap
+global `max_size` - cutting attention FLOP-waste by removing the large gap
 between short proteins and the tier's max.
 
 Not imported by any existing code path. Becomes active only when a dataset
@@ -14,7 +14,7 @@ Boundaries are interpreted as **inclusive upper edges**, using
 ``np.searchsorted(side='left')``:
 
     bucket_boundaries = [128, 256, 384, 512]
-    → bucket 0 = (_, 128], bucket 1 = (128, 256],
+    -> bucket 0 = (_, 128], bucket 1 = (128, 256],
       bucket 2 = (256, 384], bucket 3 = (384, 512]
 
 Samples with length above the last boundary are dropped (dataset-level
@@ -73,7 +73,7 @@ class LengthBucketedBatchSampler(Sampler[List[int]]):
         self.epoch = 0
 
         # Assign each sample to a bucket (right-exclusive below, inclusive above).
-        # side='left' ⇒ length == boundary lands in the lower bucket.
+        # side='left' => length == boundary lands in the lower bucket.
         bucket_of = np.searchsorted(self.boundaries, self.lengths, side="left")
 
         # Clamp: samples above the last boundary land in no bucket; drop them.

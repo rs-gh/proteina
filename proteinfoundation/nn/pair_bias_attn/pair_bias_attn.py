@@ -112,7 +112,7 @@ class PairBiasAttention(nn.Module):
         """SDPA attention: fused kernels via F.scaled_dot_product_attention.
 
         The ``attn_mask`` parameter is an additive float bias applied before
-        softmax — same semantics as the manual ``sim + b`` path.
+        softmax - same semantics as the manual ``sim + b`` path.
         """
         attn_bias = b if not isinstance(b, int) else None
 

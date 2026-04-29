@@ -6,8 +6,8 @@ same call contract as ``GearNetPerResidueEncoder``:
     forward(ca_coords_nm, mask, residue_type) -> [B, N, encoder_dim]
 
 CA coordinates are ignored (ESM is a sequence-only language model); the
-encoder reads ``residue_type`` — the OpenFold-indexed amino-acid tensor
-already attached to every proteina batch — and maps it into the ESM
+encoder reads ``residue_type`` - the OpenFold-indexed amino-acid tensor
+already attached to every proteina batch - and maps it into the ESM
 tokenizer's vocabulary.
 """
 
@@ -74,7 +74,7 @@ class ESMPerResidueEncoder(nn.Module):
         self.eos_token_id = tokenizer.eos_token_id
         self.pad_token_id = tokenizer.pad_token_id
 
-        # Freeze ESM — REPA target is a stop-gradient.
+        # Freeze ESM - REPA target is a stop-gradient.
         for param in self.parameters():
             param.requires_grad = False
 

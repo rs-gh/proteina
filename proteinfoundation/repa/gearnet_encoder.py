@@ -135,7 +135,7 @@ class GearNetPerResidueEncoder(nn.Module):
         for layer in self.gearnet.layers:
             h_v = layer(h_v, edge_list, h_e)
 
-        # h_v is now [total_atoms, hidden_dim=512] — per-residue since CA-only
+        # h_v is now [total_atoms, hidden_dim=512] - per-residue since CA-only
         # Scatter back to dense format
         return self._scatter_to_dense(h_v, atom2batch, b, n, mask)
 
@@ -147,7 +147,7 @@ class PWGearNetEdgePerResidueEncoder(nn.Module):
     residue mask + residue_type) and scatter results back to dense format.
 
     Requires residue_type: PW GearNet-Edge uses residue identity as node features.
-    encoder_dim = 3072 (concat of 6×512 hidden layers).
+    encoder_dim = 3072 (concat of 6x512 hidden layers).
     """
 
     def __init__(
@@ -180,18 +180,18 @@ class PWGearNetEdgePerResidueEncoder(nn.Module):
             residue_type: [b, n] long, residue indices 0-19 (AA) / 20 (UNK). Required.
 
         Returns:
-            [b, n, 3072] — masked positions are zero.
+            [b, n, 3072] - masked positions are zero.
         """
         if residue_type is None:
             raise ValueError(
-                "PWGearNetEdgePerResidueEncoder requires residue_type — "
+                "PWGearNetEdgePerResidueEncoder requires residue_type - "
                 "PW GearNet-Edge uses residue identity as node features."
             )
 
         b, n, _ = ca_coords_nm.shape
         device = ca_coords_nm.device
 
-        # nm → Å
+        # nm -> A
         ca_coords_ang = ca_coords_nm.float() * 10.0
 
         # Flatten to valid residues only
@@ -254,18 +254,18 @@ class MCGearNetEdgePerResidueEncoder(nn.Module):
             residue_type: [b, n] long, residue indices 0-19 (AA) / 20 (UNK). Required.
 
         Returns:
-            [b, n, 3072] — masked positions are zero.
+            [b, n, 3072] - masked positions are zero.
         """
         if residue_type is None:
             raise ValueError(
-                "MCGearNetEdgePerResidueEncoder requires residue_type — "
+                "MCGearNetEdgePerResidueEncoder requires residue_type - "
                 "MC-GearNet-Edge uses residue identity as node features."
             )
 
         b, n, _ = ca_coords_nm.shape
         device = ca_coords_nm.device
 
-        # nm → Å
+        # nm -> A
         ca_coords_ang = ca_coords_nm.float() * 10.0
 
         # Flatten to valid residues only

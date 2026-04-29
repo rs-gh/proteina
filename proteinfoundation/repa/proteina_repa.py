@@ -18,7 +18,7 @@ from proteinfoundation.utils.ff_utils.pdb_utils import mask_cath_code_by_level
 def _build_encoder(repa_cfg) -> nn.Module:
     """Instantiate the frozen REPA target encoder from config.
 
-    Supports ``repa.encoder.type ∈ {"gearnet", "esm"}``. Falls back to the
+    Supports ``repa.encoder.type in {"gearnet", "esm"}``. Falls back to the
     legacy ``repa.gearnet_ckpt_path`` schema (pre-pluggable-encoder) so
     existing training YAMLs keep working without edits.
     """

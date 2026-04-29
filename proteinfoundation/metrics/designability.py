@@ -140,7 +140,7 @@ def convert_outputs_to_pdb(outputs):
         per-sample mean pLDDT (averaged over residues/atoms).
 
     Note: HF `EsmForProteinFolding` returns pLDDT in the [0, 1] range, not the
-    paper convention of [0, 100]. Values here are NOT scaled — consumers should
+    paper convention of [0, 100]. Values here are NOT scaled - consumers should
     multiply by 100 if they need the conventional pLDDT scale.
     """
     final_atom_positions = atom14_to_atom37(outputs["positions"][-1], outputs)

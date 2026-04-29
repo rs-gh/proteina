@@ -15,7 +15,7 @@ from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import torch.utils.data
 import torch_geometric
-import proteinfoundation.repa.pyg_compat  # noqa: F401 — patch before torch_sparse (worker processes)
+import proteinfoundation.repa.pyg_compat  # noqa: F401 - patch before torch_sparse (worker processes)
 import torch_sparse
 from torch.utils.data.dataloader import default_collate
 from torch_geometric.data import Batch, Dataset
@@ -102,7 +102,7 @@ def _num_nodes_of(d: BaseData) -> int:
     coords = d.get("coords") if hasattr(d, "get") else getattr(d, "coords", None)
     if coords is None:
         raise ValueError(
-            "Data object has neither num_nodes nor coords — can't determine bucket."
+            "Data object has neither num_nodes nor coords - can't determine bucket."
         )
     return int(coords.shape[0])
 
@@ -112,7 +112,7 @@ def _target_length_for_batch(
 ) -> Optional[int]:
     """Given a batch of PyG Data objects and optional bucket boundaries, return the
     padding target (smallest boundary >= batch's max num_nodes). Returns None when
-    boundaries are not configured — caller should skip bucket-max padding.
+    boundaries are not configured - caller should skip bucket-max padding.
     """
     if bucket_boundaries is None:
         return None

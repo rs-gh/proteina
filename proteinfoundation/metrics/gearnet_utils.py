@@ -255,7 +255,7 @@ class GearNet(nn.Module):
                 Defaults to 0.1.
             dropout (Optional[float], optional): Probability in Dropout.
                 Defaults to 0.2.
-            radius (Optional[float], optional): Spatial radius (Å) for constructing structure graph
+            radius (Optional[float], optional): Spatial radius (A) for constructing structure graph
                 Defaults to 5.0.
             num_classes (Optional[List[Tuple[str, int]]], optional): List of tuples (level, num_class), indicating which fold level to predict and the number of classes at this level.
                 Defaults to None.
@@ -527,7 +527,7 @@ class NoTrainCAGearNet(GearNet):
         return super().train(False)
 
 
-# ── MC-GearNet-Edge: plain-PyTorch reimplementation ──────────────────────────
+# -- MC-GearNet-Edge: plain-PyTorch reimplementation --------------------------
 #
 # Reproduces torchdrug GearNet with edge network (Zhang et al., ICLR 2023)
 # without torchdrug. Module names exactly match mc_gearnet_edge.pth (Zenodo
@@ -581,7 +581,7 @@ class GearNetEdge(nn.Module):
         input_dim=21, hidden_dims=[512]*6, num_relation=7
         edge_input_dim=59, num_angle_bin=8
         batch_norm=True, short_cut=True, concat_hidden=True
-    Output: per-residue concat of all 6 hidden layers → 3072-dim.
+    Output: per-residue concat of all 6 hidden layers -> 3072-dim.
     """
 
     _SEQ_MAX_DIST: int = 2
@@ -602,7 +602,7 @@ class GearNetEdge(nn.Module):
         edge_input_dim = 59  # 21 + 21 + 7 + 10 (see _build_edges)
 
         # edge hidden dims mirror node hidden dims but starting from edge_input_dim
-        # layer 0: 59→21, layers 1-5: 21→512 / 512→512
+        # layer 0: 59->21, layers 1-5: 21->512 / 512->512
         # Deduced from checkpoint: edge_layers.0 output=21, edge_layers.1+ output=512
         edge_hidden_dims = [21] + [512] * (len(hidden_dims) - 1)
 
@@ -624,7 +624,7 @@ class GearNetEdge(nn.Module):
             for i in range(len(hidden_dims))
         ])
 
-    # ── Internal helpers ────────────────────────────────────────────────────
+    # -- Internal helpers ----------------------------------------------------
 
     @staticmethod
     def _local_idx(atom2batch: torch.Tensor) -> torch.Tensor:
@@ -651,8 +651,8 @@ class GearNetEdge(nn.Module):
         """Build edge_index [E, 3] and 59-dim edge features [E, 59]."""
         device = coords.device
 
-        # ── Sequential edges ─────────────────────────────────────────────────
-        # radius_graph on local sequence position — same trick as NoTrainCAGearNet.
+        # -- Sequential edges -------------------------------------------------
+        # radius_graph on local sequence position - same trick as NoTrainCAGearNet.
         # Edges cross batch boundaries are impossible because local_idx resets to 0
         # per protein, but batch= argument enforces it explicitly.
         seq_no, seq_ni = radius_graph(
@@ -665,8 +665,8 @@ class GearNetEdge(nn.Module):
         seq_offset = local_idx[seq_no].long() - local_idx[seq_ni].long()
         seq_rel = (seq_offset + self._SEQ_MAX_DIST).clamp(0, 2 * self._SEQ_MAX_DIST)
 
-        # ── Spatial + KNN edges (single batched cdist) ────────────────────────
-        # Build the full N×N distance matrix then mask out cross-batch pairs.
+        # -- Spatial + KNN edges (single batched cdist) ------------------------
+        # Build the full NxN distance matrix then mask out cross-batch pairs.
         c = coords.float()
         dist_mat = torch.cdist(c, c)                          # [N, N]
         cross_batch = atom2batch.unsqueeze(0) != atom2batch.unsqueeze(1)  # [N, N]
@@ -736,7 +736,7 @@ class GearNetEdge(nn.Module):
 
         # Fully vectorised line-graph: pairs (e1, e2) where no[e1] == ni[e2].
         # Sort both edge lists by the middle node, then use repeat_interleave
-        # to form cartesian products within each group — no Python loops over nodes.
+        # to form cartesian products within each group - no Python loops over nodes.
         e1_order = no.argsort(stable=True)   # e1 sorted by destination
         e2_order = ni.argsort(stable=True)   # e2 sorted by source
         e1_keys  = no[e1_order]
@@ -808,7 +808,7 @@ class GearNetEdge(nn.Module):
 
         return torch.stack([lg_src, lg_dst, angle_bin], dim=1), n_edges
 
-    # ── Forward ─────────────────────────────────────────────────────────────
+    # -- Forward -------------------------------------------------------------
 
     def forward(
         self,
@@ -879,7 +879,7 @@ class NoTrainMCGearNetEdge(GearNetEdge):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if missing:
                 raise RuntimeError(
-                    f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
+                    f"Missing keys loading {ckpt_path!r} - architecture mismatch? "
                     f"First missing key: {missing[0]!r} ({len(missing)} total)"
                 )
         self.eval()
@@ -897,20 +897,20 @@ if __name__ == "__main__":
     breakpoint()
 
 
-# ── ProteinWorkshop GearNet-Edge reimplementation ─────────────────────────────
+# -- ProteinWorkshop GearNet-Edge reimplementation -----------------------------
 #
 # Reproduces ProteinWorkshop GearNet-Edge (Jamasb et al., ICLR 2024) without
 # proteinworkshop / torchdrug / graphein deps.
 #
 # Architecture (matching gear_net_edge.yaml + ca_seq features):
 #   input_dim=39  amino_acid_one_hot[23] + sequence_positional_encoding[16]
-#   num_layers=6, emb_dim=512, concat_hidden=True → 3072-dim output
+#   num_layers=6, emb_dim=512, concat_hidden=True -> 3072-dim output
 #   num_relation=1 (knn_16 edges only)
 #   num_angle_bin=7 (line-graph edge message passing)
 #   edge_input_dim=81  (2*39 + 1 + 1 + 1)
 #
 # Attribute names exactly match PW Lightning checkpoint keys after stripping
-# the "encoder." prefix — enabling load_state_dict(state, strict=False).
+# the "encoder." prefix - enabling load_state_dict(state, strict=False).
 # Checkpoint source: Zenodo 8287754 (5 pretraining objectives).
 
 
@@ -967,7 +967,7 @@ class PWGearNetEdge(nn.Module):
         input_dim=43  amino_acid_one_hot(23) + seq_pos_enc(16) + alpha(2) + kappa(2)
         emb_dim=512, num_layers=6, num_relation=1 (knn_16),
         num_angle_bin=7, edge_input_dim=89, concat_hidden=True.
-    Output: [N, 3072] per-residue embeddings (concat of 6×512 hidden layers).
+    Output: [N, 3072] per-residue embeddings (concat of 6x512 hidden layers).
 
     Attribute names match PW Lightning checkpoint keys after stripping the
     "encoder." prefix, so load_state_dict(state, strict=False) loads correctly.
@@ -1017,7 +1017,7 @@ class PWGearNetEdge(nn.Module):
             nn.BatchNorm1d(node_dims[i + 1]) for i in range(self._NUM_LAYERS)
         ])
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # -- Internal helpers ------------------------------------------------------
 
     @staticmethod
     def _local_idx(atom2batch: torch.Tensor) -> torch.Tensor:
@@ -1085,16 +1085,16 @@ class PWGearNetEdge(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute CA backbone angle features matching graphein's alpha/kappa.
 
-        alpha: dihedral of (i-1, i, i+1, i+2) CA atoms → [N, 2] (cos, sin)
-        kappa: π - angle(i-2, i, i+2) CA atoms        → [N, 2] (cos, sin)
-        Boundary residues (missing neighbours) → [cos(0), sin(0)] = [1, 0],
-        matching PW's F.pad(angles, (...)) → embed convention.
+        alpha: dihedral of (i-1, i, i+1, i+2) CA atoms -> [N, 2] (cos, sin)
+        kappa: pi - angle(i-2, i, i+2) CA atoms        -> [N, 2] (cos, sin)
+        Boundary residues (missing neighbours) -> [cos(0), sin(0)] = [1, 0],
+        matching PW's F.pad(angles, (...)) -> embed convention.
         """
         N, device = coords.shape[0], coords.device
         max_local = int(local_idx.max().item()) + 1
         n_prot    = int(atom2batch.max().item()) + 1
 
-        # (protein, local_pos) → flat index; -1 = missing
+        # (protein, local_pos) -> flat index; -1 = missing
         lookup = torch.full((n_prot, max_local), -1, dtype=torch.long, device=device)
         lookup[atom2batch, local_idx] = torch.arange(N, device=device)
 
@@ -1121,10 +1121,10 @@ class PWGearNetEdge(nn.Module):
         b2n = b2 / (b2.norm(dim=-1, keepdim=True) + 1e-8)
         cos_a = (n1 * n2).sum(-1) / ((n1.norm(-1) * n2.norm(-1)).clamp(min=1e-8))
         sin_a = (torch.linalg.cross(n1, b2n) * n2).sum(-1) / (n2.norm(-1) + 1e-8)
-        alpha = torch.atan2(sin_a, cos_a) * a_valid.float()  # → 0 at boundaries
+        alpha = torch.atan2(sin_a, cos_a) * a_valid.float()  # -> 0 at boundaries
         alpha_feat = torch.stack([alpha.cos(), alpha.sin()], dim=-1)  # [1,0] at boundaries
 
-        # Kappa: π - angle(i-2, i, i+2)
+        # Kappa: pi - angle(i-2, i, i+2)
         ca_m2, v_m2  = nbr(-2)
         ca_p2k, v_p2k = nbr(+2)
         k_valid = v_m2 & v_p2k
@@ -1188,8 +1188,8 @@ class PWGearNetEdge(nn.Module):
         num_nodes = coords.shape[0]
         e_idx = torch.arange(n_edges, device=device)
 
-        # Edges sorted by destination → groups arriving edges per node.
-        # Edges sorted by source     → groups departing edges per node.
+        # Edges sorted by destination -> groups arriving edges per node.
+        # Edges sorted by source     -> groups departing edges per node.
         e_by_dst = e_idx[node_out.argsort(stable=True)]
         e_by_src = e_idx[node_in.argsort(stable=True)]
 
@@ -1203,7 +1203,7 @@ class PWGearNetEdge(nn.Module):
             z = torch.zeros(0, dtype=torch.long, device=device)
             return z, z, z, n_edges
 
-        # Build cartesian products (arriving_e × departing_e) per node j.
+        # Build cartesian products (arriving_e x departing_e) per node j.
         # Ported from PW's get_line_graph (vectorised, no Python loops).
         starts      = (size.cumsum(0) - size).repeat_interleave(size)
         range_      = torch.arange(total, device=device)
@@ -1233,7 +1233,7 @@ class PWGearNetEdge(nn.Module):
 
         return lg_src, lg_dst, lg_rel, n_edges
 
-    # ── Forward ───────────────────────────────────────────────────────────────
+    # -- Forward ---------------------------------------------------------------
 
     def forward(
         self,
@@ -1250,16 +1250,16 @@ class PWGearNetEdge(nn.Module):
         lg_src, lg_dst, lg_rel, n_lg = self._build_line_graph(coords, ni, no)
 
         # PW forward (verified against proteinworkshop source):
-        #   1. hidden = layers[i](batch, layer_input)     — uses RAW edge_feat (89-dim)
+        #   1. hidden = layers[i](batch, layer_input)     - uses RAW edge_feat (89-dim)
         #   2. short-cut: hidden += layer_input (when dims match)
-        #   3. edge_hidden = edge_layers[i](line_graph, edge_input)   — chain
-        #   4. update = scatter_sum(edge_hidden, node_out) → view → layers[i].linear
+        #   3. edge_hidden = edge_layers[i](line_graph, edge_input)   - chain
+        #   4. update = scatter_sum(edge_hidden, node_out) -> view -> layers[i].linear
         #   5. hidden += relu(update)
-        #   6. hidden = batch_norms[i](hidden)   — top-level BN
-        #   7. edge_input = edge_hidden   — chain edge state forward
+        #   6. hidden = batch_norms[i](hidden)   - top-level BN
+        #   7. edge_input = edge_hidden   - chain edge state forward
         # The node layer uses RAW f_ji (edge_feat, 89-dim) via layer.edge_linear,
         # while the updated edge_hidden contributes through layers[i].linear reuse.
-        edge_input = edge_feat  # starts at 89-dim, evolves: 89 → 43 → 512 → 512 → …
+        edge_input = edge_feat  # starts at 89-dim, evolves: 89 -> 43 -> 512 -> 512 -> ...
         hiddens: List[torch.Tensor] = []
 
         for layer, edge_layer, bn in zip(self.layers, self.edge_layers, self.batch_norms):
@@ -1270,7 +1270,7 @@ class PWGearNetEdge(nn.Module):
             if h_new.shape == h_v.shape:
                 h_new = h_new + h_v
 
-            # 3. Line-graph edge conv → updated edge state.
+            # 3. Line-graph edge conv -> updated edge state.
             edge_hidden = edge_layer(edge_input, lg_src, lg_dst, lg_rel, n_lg)
 
             # 4. Edge-to-node scatter; reuses layer.linear (input dim matches
@@ -1351,7 +1351,7 @@ class NoTrainPWGearNetEdge(PWGearNetEdge):
             missing, unexpected = self.load_state_dict(state, strict=False)
             if missing:
                 raise RuntimeError(
-                    f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
+                    f"Missing keys loading {ckpt_path!r} - architecture mismatch? "
                     f"First missing: {missing[0]!r} ({len(missing)} total)"
                 )
         self.eval()

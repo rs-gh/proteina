@@ -175,10 +175,10 @@ if __name__ == "__main__":
     # Set run name and root directory
     run_name = cfg_exp.run_name_
     log_info(f"Job name: {run_name}")
-    # Resolve symlinks upfront (`store` is a symlink /home/...→ /rds/...) so
+    # Resolve symlinks upfront (`store` is a symlink /home/...-> /rds/...) so
     # Lightning's atomic_save doesn't straddle filesystems when it falls back
-    # from os.rename to copyfile. Without this the temp→final move trips
-    # "Invalid cross-device link" → sendfile → spurious disk-quota errors.
+    # from os.rename to copyfile. Without this the temp->final move trips
+    # "Invalid cross-device link" -> sendfile -> spurious disk-quota errors.
     root_run = os.path.realpath(os.path.join(".", "store", run_name))
     log_info(f"Root run: {root_run}")
 
@@ -235,7 +235,7 @@ if __name__ == "__main__":
         lmdb_dir = os.environ.get("LMDB_DIR", "unknown")
         lmdb_source = "nvme" if "/tmp/" in lmdb_dir else "lustre"
 
-        # Derive encoder type for WandB tag + group — mirrors the resolution
+        # Derive encoder type for WandB tag + group - mirrors the resolution
         # order used by _build_encoder() so the tag matches what's instantiated.
         repa_cfg = cfg_exp.get("repa")
         if repa_cfg is None:
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         elif repa_cfg.get("encoder") is not None:
             encoder_type = repa_cfg.encoder.type
         else:
-            encoder_type = "gearnet"  # legacy (flat repa.gearnet_ckpt_path) → gearnet
+            encoder_type = "gearnet"  # legacy (flat repa.gearnet_ckpt_path) -> gearnet
 
         wandb_logger = WandbLogger(
             project=cfg_exp.log.wandb_project,
@@ -333,11 +333,11 @@ if __name__ == "__main__":
     # === KEY CHANGE: Use ProteinaREPA if repa config is present ===
     use_repa = cfg_exp.get("repa") is not None
     if use_repa:
-        log_info("REPA config detected — using ProteinaREPA model")
+        log_info("REPA config detected - using ProteinaREPA model")
         log_info(f"REPA layers: {cfg_exp.repa.layers}, lambda: {cfg_exp.repa.lambda_repa}")
         model = ProteinaREPA(cfg_exp, store_dir=root_run)
     else:
-        log_info("No REPA config — using standard Proteina model")
+        log_info("No REPA config - using standard Proteina model")
         model = Proteina(cfg_exp, store_dir=root_run)
 
     # LoRA support
@@ -360,16 +360,16 @@ if __name__ == "__main__":
         # bucket). Force dynamic=False so each bucket gets its own static graph
         # instead of Dynamo's automatic_dynamic path, which switches to symbolic
         # shapes on the second distinct shape and can trip Inductor on ops with
-        # additive shape offsets (e.g. num_registers=10 → `s2 + 10`). P2 verified
+        # additive shape offsets (e.g. num_registers=10 -> `s2 + 10`). P2 verified
         # static compilation works cleanly across all 4 bucket shapes.
         bucketed = cfg_data.datamodule.get("sampling_mode") == "length-bucketed"
         dyn = False if bucketed else None
         if bucketed:
-            # 4 bucket shapes × ≥2 dtype contexts (bf16 autocast in train vs
-            # float32 in some call sites) × a few resume frames easily exceeds
+            # 4 bucket shapes x >=2 dtype contexts (bf16 autocast in train vs
+            # float32 in some call sites) x a few resume frames easily exceeds
             # Dynamo's default recompile cache size (8). Once the cache fills,
             # Dynamo silently falls back to eager for those frames, defeating
-            # the speed-up. 32 gives ~4× headroom.
+            # the speed-up. 32 gives ~4x headroom.
             import torch._dynamo as _dynamo
             _dynamo.config.recompile_limit = 32
             log_info(f"Set torch._dynamo.config.recompile_limit = 32 (bucketed)")

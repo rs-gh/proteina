@@ -483,7 +483,16 @@ class NoTrainCAGearNet(GearNet):
     Pre-trained GearNet model on CA-only structures
     """
 
-    def __init__(self, ckpt_path: str):
+    def __init__(
+        self,
+        ckpt_path: str | None = None,
+        random_init: bool = False,
+        random_seed: int = 0,
+    ):
+        if random_init:
+            # Deterministic random init so the REPA target is stable across
+            # checkpoint resume / DDP ranks.
+            torch.manual_seed(random_seed)
         super().__init__(
             input_dim=512,
             hidden_dim=512,
@@ -496,7 +505,12 @@ class NoTrainCAGearNet(GearNet):
             num_classes=[["T", 1336], ["A", 43], ["C", 5]],
         )
 
-        if os.path.exists(ckpt_path):
+        if random_init:
+            print(
+                f"NoTrainCAGearNet: random_init=True (seed={random_seed}), "
+                "skipping pretrained weight load."
+            )
+        elif ckpt_path is not None and os.path.exists(ckpt_path):
             state_dict = torch.load(ckpt_path, map_location="cpu")
             self.load_state_dict(state_dict)
         else:
@@ -841,20 +855,33 @@ class NoTrainMCGearNetEdge(GearNetEdge):
         hpc-scripts/proteina/data_prep/fetch_mc_gearnet_edge.sh
     """
 
-    def __init__(self, ckpt_path: str):
+    def __init__(
+        self,
+        ckpt_path: str | None = None,
+        random_init: bool = False,
+        random_seed: int = 0,
+    ):
+        if random_init:
+            torch.manual_seed(random_seed)
         super().__init__()
-        if not os.path.exists(ckpt_path):
-            raise FileNotFoundError(
-                f"MC-GearNet-Edge checkpoint not found: {ckpt_path!r}. "
-                "Run hpc-scripts/proteina/data_prep/fetch_mc_gearnet_edge.sh to download it."
+        if random_init:
+            print(
+                f"NoTrainMCGearNetEdge: random_init=True (seed={random_seed}), "
+                "skipping pretrained weight load."
             )
-        state = torch.load(ckpt_path, map_location="cpu")
-        missing, unexpected = self.load_state_dict(state, strict=False)
-        if missing:
-            raise RuntimeError(
-                f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
-                f"First missing key: {missing[0]!r} ({len(missing)} total)"
-            )
+        else:
+            if not os.path.exists(ckpt_path or ""):
+                raise FileNotFoundError(
+                    f"MC-GearNet-Edge checkpoint not found: {ckpt_path!r}. "
+                    "Run hpc-scripts/proteina/data_prep/fetch_mc_gearnet_edge.sh to download it."
+                )
+            state = torch.load(ckpt_path, map_location="cpu")
+            missing, unexpected = self.load_state_dict(state, strict=False)
+            if missing:
+                raise RuntimeError(
+                    f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
+                    f"First missing key: {missing[0]!r} ({len(missing)} total)"
+                )
         self.eval()
         for p in self.parameters():
             p.requires_grad_(False)
@@ -868,3 +895,468 @@ if __name__ == "__main__":
     ca_model = NoTrainCAGearNet(ckpt_path="./model_weights/gearnet_ca.pth")
 
     breakpoint()
+
+
+# ── ProteinWorkshop GearNet-Edge reimplementation ─────────────────────────────
+#
+# Reproduces ProteinWorkshop GearNet-Edge (Jamasb et al., ICLR 2024) without
+# proteinworkshop / torchdrug / graphein deps.
+#
+# Architecture (matching gear_net_edge.yaml + ca_seq features):
+#   input_dim=39  amino_acid_one_hot[23] + sequence_positional_encoding[16]
+#   num_layers=6, emb_dim=512, concat_hidden=True → 3072-dim output
+#   num_relation=1 (knn_16 edges only)
+#   num_angle_bin=7 (line-graph edge message passing)
+#   edge_input_dim=81  (2*39 + 1 + 1 + 1)
+#
+# Attribute names exactly match PW Lightning checkpoint keys after stripping
+# the "encoder." prefix — enabling load_state_dict(state, strict=False).
+# Checkpoint source: Zenodo 8287754 (5 pretraining objectives).
+
+
+class _PWLayer(nn.Module):
+    """GearNet conv layer with attribute names matching PW checkpoint keys.
+
+    Names (self_loop, linear, edge_linear, batch_norm) mirror
+    proteinworkshop GeometricRelationalGraphConv after LazyLinear
+    materialisation.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+        num_relation: int,
+        edge_input_dim: Optional[int] = None,
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.num_relation = num_relation
+        self.self_loop = nn.Linear(input_dim, output_dim)
+        self.linear = nn.Linear(num_relation * input_dim, output_dim)
+        self.edge_linear = (
+            nn.Linear(edge_input_dim, input_dim) if edge_input_dim is not None else None
+        )
+        self.batch_norm = nn.BatchNorm1d(output_dim)
+
+    def forward(
+        self,
+        h: torch.Tensor,                           # [N, input_dim]
+        node_in: torch.Tensor,                     # [E]
+        node_out: torch.Tensor,                    # [E]
+        rel_type: torch.Tensor,                    # [E]
+        num_nodes: int,
+        edge_feat: Optional[torch.Tensor] = None,  # [E, edge_input_dim]
+    ) -> torch.Tensor:
+        msg = h[node_in]
+        if self.edge_linear is not None and edge_feat is not None:
+            msg = msg + self.edge_linear(edge_feat.float())
+        idx = node_out * self.num_relation + rel_type
+        update = scatter_sum(msg, idx, dim=0, dim_size=num_nodes * self.num_relation)
+        update = update.view(num_nodes, self.num_relation * self.input_dim)
+        out = self.linear(update) + self.self_loop(h)
+        out = self.batch_norm(out)
+        return F.relu(out)
+
+
+class PWGearNetEdge(nn.Module):
+    """ProteinWorkshop GearNet-Edge, plain-PyTorch reimplementation.
+
+    Architecture matches gear_net_edge.yaml + ca_angles feature config
+    (the config used for all Zenodo 8287754 checkpoints):
+        input_dim=43  amino_acid_one_hot(23) + seq_pos_enc(16) + alpha(2) + kappa(2)
+        emb_dim=512, num_layers=6, num_relation=1 (knn_16),
+        num_angle_bin=7, edge_input_dim=89, concat_hidden=True.
+    Output: [N, 3072] per-residue embeddings (concat of 6×512 hidden layers).
+
+    Attribute names match PW Lightning checkpoint keys after stripping the
+    "encoder." prefix, so load_state_dict(state, strict=False) loads correctly.
+
+    alpha = CA dihedral of (i-1, i, i+1, i+2); kappa = CA bend angle at (i-2, i, i+2).
+    Both are CA-only, compatible with proteina's backbone-only representation.
+
+    Checkpoint source: Zenodo 8287754. Download with
+        hpc-scripts/proteina/data_prep/fetch_pw_gearnet.sh
+    """
+
+    _AA_DIM: int = 23
+    _SEQ_ENC_DIM: int = 16
+    _INPUT_DIM: int = 43        # _AA_DIM + _SEQ_ENC_DIM + alpha(2) + kappa(2)
+    _EMB_DIM: int = 512
+    _NUM_LAYERS: int = 6
+    _KNN_K: int = 16
+    _NUM_RELATION: int = 1
+    _NUM_ANGLE_BIN: int = 7
+    _EDGE_INPUT_DIM: int = 89   # _INPUT_DIM*2 + _NUM_RELATION + seq_dist(1) + dist(1)
+
+    def __init__(self) -> None:
+        super().__init__()
+        inp = self._INPUT_DIM
+        emb = self._EMB_DIM
+        nr  = self._NUM_RELATION
+        nab = self._NUM_ANGLE_BIN
+        eid = self._EDGE_INPUT_DIM
+
+        # node_dims: [39, 512, 512, 512, 512, 512, 512]
+        node_dims = [inp] + [emb] * self._NUM_LAYERS
+        # edge_dims = [edge_input_dim] + node_dims[:-1] (PW convention)
+        # [81, 39, 512, 512, 512, 512, 512]
+        edge_dims = [eid] + node_dims[:-1]
+
+        self.output_dim = emb * self._NUM_LAYERS  # 3072
+
+        self.layers = nn.ModuleList([
+            _PWLayer(node_dims[i], node_dims[i + 1], nr, edge_input_dim=eid)
+            for i in range(self._NUM_LAYERS)
+        ])
+        self.edge_layers = nn.ModuleList([
+            _PWLayer(edge_dims[i], edge_dims[i + 1], nab, edge_input_dim=None)
+            for i in range(self._NUM_LAYERS)
+        ])
+        self.batch_norms = nn.ModuleList([
+            nn.BatchNorm1d(node_dims[i + 1]) for i in range(self._NUM_LAYERS)
+        ])
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _local_idx(atom2batch: torch.Tensor) -> torch.Tensor:
+        """Per-node residue index within its batch element (same as GearNetEdge)."""
+        order = atom2batch.argsort(stable=True)
+        counts = torch.bincount(atom2batch)
+        local = torch.zeros_like(atom2batch)
+        local[order] = torch.arange(atom2batch.shape[0], device=atom2batch.device) - \
+            torch.repeat_interleave(
+                torch.cat([torch.zeros(1, dtype=torch.long, device=atom2batch.device),
+                           counts.cumsum(0)[:-1]]),
+                counts,
+            )[order.argsort(stable=True)]
+        return local
+
+    def _build_knn_graph(
+        self,
+        coords: torch.Tensor,       # [N, 3]
+        atom2batch: torch.Tensor,   # [N]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """knn_16: 16 nearest spatial neighbours within each protein.
+
+        Returns (node_in, node_out, rel) each [E]; rel is all-zero (1 relation).
+        """
+        device = coords.device
+        n = coords.shape[0]
+        k = min(self._KNN_K, int(torch.bincount(atom2batch).min().item()) - 1)
+        if k <= 0:
+            z = torch.zeros(0, dtype=torch.long, device=device)
+            return z, z, z
+
+        dist_mat = torch.cdist(coords.float(), coords.float())
+        cross_batch = atom2batch.unsqueeze(0) != atom2batch.unsqueeze(1)
+        self_mask = torch.eye(n, dtype=torch.bool, device=device)
+        dist_mat = dist_mat.masked_fill(cross_batch | self_mask, float("inf"))
+
+        _, knn_j = dist_mat.topk(k, dim=-1, largest=False)
+        ki = torch.arange(n, device=device).unsqueeze(1).expand_as(knn_j).reshape(-1)
+        kj = knn_j.reshape(-1)
+        valid = dist_mat[ki, kj] < float("inf")
+        node_in  = ki[valid]
+        node_out = kj[valid]
+        rel = torch.zeros(node_in.shape[0], dtype=torch.long, device=device)
+        return node_in, node_out, rel
+
+    @staticmethod
+    def _seq_positional_encoding(pos: torch.Tensor, d: int = 16) -> torch.Tensor:
+        """Standard sinusoidal positional encoding of per-residue sequence position.
+
+        Matches graphein sequence_positional_encoding (transformer-style).
+        NOTE: Verify exact formula against graphein source if precise embedding
+        match to PW pretrained weights is required.
+        """
+        device = pos.device
+        k = torch.arange(d // 2, device=device).float()
+        denom = torch.pow(10000.0, 2.0 * k / d)
+        p = pos.float().unsqueeze(-1) / denom
+        return torch.cat([p.sin(), p.cos()], dim=-1)  # [N, d]
+
+    @staticmethod
+    def _compute_alpha_kappa(
+        coords: torch.Tensor,       # [N, 3] CA coords
+        atom2batch: torch.Tensor,   # [N]
+        local_idx: torch.Tensor,    # [N] per-protein residue index
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Compute CA backbone angle features matching graphein's alpha/kappa.
+
+        alpha: dihedral of (i-1, i, i+1, i+2) CA atoms → [N, 2] (cos, sin)
+        kappa: π - angle(i-2, i, i+2) CA atoms        → [N, 2] (cos, sin)
+        Boundary residues (missing neighbours) → [cos(0), sin(0)] = [1, 0],
+        matching PW's F.pad(angles, (...)) → embed convention.
+        """
+        N, device = coords.shape[0], coords.device
+        max_local = int(local_idx.max().item()) + 1
+        n_prot    = int(atom2batch.max().item()) + 1
+
+        # (protein, local_pos) → flat index; -1 = missing
+        lookup = torch.full((n_prot, max_local), -1, dtype=torch.long, device=device)
+        lookup[atom2batch, local_idx] = torch.arange(N, device=device)
+
+        def nbr(offset: int) -> Tuple[torch.Tensor, torch.Tensor]:
+            tgt   = local_idx + offset
+            valid = (tgt >= 0) & (tgt < max_local)
+            fidx  = lookup[atom2batch, tgt.clamp(0, max_local - 1)]
+            valid = valid & (fidx >= 0)
+            c     = torch.zeros(N, 3, device=device, dtype=coords.dtype)
+            c[valid] = coords[fidx[valid]]
+            return c, valid
+
+        # Alpha: dihedral (i-1, i, i+1, i+2)
+        ca_m1, v_m1 = nbr(-1)
+        ca_p1, v_p1 = nbr(+1)
+        ca_p2, v_p2 = nbr(+2)
+        a_valid = v_m1 & v_p1 & v_p2
+
+        b1 = coords - ca_m1
+        b2 = ca_p1  - coords
+        b3 = ca_p2  - ca_p1
+        n1 = torch.linalg.cross(b1, b2)
+        n2 = torch.linalg.cross(b2, b3)
+        b2n = b2 / (b2.norm(dim=-1, keepdim=True) + 1e-8)
+        cos_a = (n1 * n2).sum(-1) / ((n1.norm(-1) * n2.norm(-1)).clamp(min=1e-8))
+        sin_a = (torch.linalg.cross(n1, b2n) * n2).sum(-1) / (n2.norm(-1) + 1e-8)
+        alpha = torch.atan2(sin_a, cos_a) * a_valid.float()  # → 0 at boundaries
+        alpha_feat = torch.stack([alpha.cos(), alpha.sin()], dim=-1)  # [1,0] at boundaries
+
+        # Kappa: π - angle(i-2, i, i+2)
+        ca_m2, v_m2  = nbr(-2)
+        ca_p2k, v_p2k = nbr(+2)
+        k_valid = v_m2 & v_p2k
+
+        ba   = ca_m2  - coords
+        bc   = ca_p2k - coords
+        cos_k = (ba * bc).sum(-1) / ((ba.norm(-1) * bc.norm(-1)).clamp(min=1e-8))
+        kappa = (math.pi - torch.acos(cos_k.clamp(-1 + 1e-6, 1 - 1e-6))) * k_valid.float()
+        kappa_feat = torch.stack([kappa.cos(), kappa.sin()], dim=-1)
+
+        return alpha_feat, kappa_feat
+
+    def _node_features(
+        self,
+        coords: torch.Tensor,         # [N, 3] CA coords in Angstroms
+        residue_types: torch.Tensor,  # [N] long, 0-19=AA, 20=UNK
+        local_idx: torch.Tensor,      # [N] long, per-protein residue index
+        atom2batch: torch.Tensor,     # [N]
+    ) -> torch.Tensor:                # [N, 43]
+        aa_oh  = F.one_hot(residue_types.clamp(0, self._AA_DIM - 1), self._AA_DIM).float()
+        seq_pe = self._seq_positional_encoding(local_idx, self._SEQ_ENC_DIM)
+        alpha_feat, kappa_feat = self._compute_alpha_kappa(coords, atom2batch, local_idx)
+        return torch.cat([aa_oh, seq_pe, alpha_feat, kappa_feat], dim=-1)
+
+    def _edge_features(
+        self,
+        h_v: torch.Tensor,       # [N, 39]
+        coords: torch.Tensor,    # [N, 3]
+        local_idx: torch.Tensor, # [N]
+        node_in: torch.Tensor,   # [E]
+        node_out: torch.Tensor,  # [E]
+        rel: torch.Tensor,       # [E]
+    ) -> torch.Tensor:           # [E, 81]
+        u        = h_v[node_in]
+        v        = h_v[node_out]
+        rel_oh   = F.one_hot(rel, self._NUM_RELATION).float()
+        seq_dist = (local_idx[node_in] - local_idx[node_out]).abs().float().unsqueeze(-1)
+        dist     = (coords[node_in].float() - coords[node_out].float()).norm(dim=-1).unsqueeze(-1)
+        return torch.cat([u, v, rel_oh, seq_dist, dist], dim=-1)
+
+    def _build_line_graph(
+        self,
+        coords: torch.Tensor,    # [N, 3]
+        node_in: torch.Tensor,   # [E]
+        node_out: torch.Tensor,  # [E]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]:
+        """Spatial line graph with PW's atan2 angle binning (num_angle_bin=7).
+
+        Line graph edge (e_in, e_out): e_in arrives at shared node j,
+        e_out departs from j. Angle is measured at j between outgoing direction
+        and reversed-incoming direction (atan2 formula matching PW SpatialLineGraph).
+
+        Returns (lg_src, lg_dst, lg_rel, n_lg_nodes) where n_lg_nodes = E.
+        """
+        n_edges = node_in.shape[0]
+        device = coords.device
+        if n_edges == 0:
+            z = torch.zeros(0, dtype=torch.long, device=device)
+            return z, z, z, 0
+
+        num_nodes = coords.shape[0]
+        e_idx = torch.arange(n_edges, device=device)
+
+        # Edges sorted by destination → groups arriving edges per node.
+        # Edges sorted by source     → groups departing edges per node.
+        e_by_dst = e_idx[node_out.argsort(stable=True)]
+        e_by_src = e_idx[node_in.argsort(stable=True)]
+
+        # deg_arr[j] = #edges arriving  at j; deg_dep[j] = #edges departing from j.
+        deg_arr = node_out.bincount(minlength=num_nodes)
+        deg_dep = node_in.bincount(minlength=num_nodes)
+        size = deg_arr * deg_dep  # line-graph edges through each original node j
+
+        total = int(size.sum().item())
+        if total == 0:
+            z = torch.zeros(0, dtype=torch.long, device=device)
+            return z, z, z, n_edges
+
+        # Build cartesian products (arriving_e × departing_e) per node j.
+        # Ported from PW's get_line_graph (vectorised, no Python loops).
+        starts      = (size.cumsum(0) - size).repeat_interleave(size)
+        range_      = torch.arange(total, device=device)
+        local_index = range_ - starts
+
+        local_inner  = deg_dep.repeat_interleave(size)          # deg_dep[j] per lg-edge
+        arr_offset   = (deg_arr.cumsum(0) - deg_arr).repeat_interleave(size)
+        dep_offset   = (deg_dep.cumsum(0) - deg_dep).repeat_interleave(size)
+
+        arr_index = torch.div(local_index, local_inner, rounding_mode="floor") + arr_offset
+        dep_index = local_index % local_inner + dep_offset
+
+        lg_src = e_by_dst[arr_index]   # arriving edge  (e_in  in PW notation)
+        lg_dst = e_by_src[dep_index]   # departing edge (e_out in PW notation)
+
+        # Angle at j: between outgoing direction and reversed-incoming direction.
+        # vector1 = pos[node_out[lg_dst]] - pos[node_in[lg_dst]]  (e_out direction)
+        # vector2 = pos[node_in[lg_src]]  - pos[node_in[lg_dst]]  (e_in reversed)
+        node_j  = node_in[lg_dst]                                   # shared middle j
+        v1 = coords[node_out[lg_dst]].float() - coords[node_j].float()
+        v2 = coords[node_in[lg_src]].float()  - coords[node_j].float()
+
+        dot     = (v1 * v2).sum(dim=-1)
+        cross_n = torch.linalg.cross(v1, v2).norm(dim=-1)
+        angle   = torch.atan2(cross_n, dot)
+        lg_rel  = (angle / math.pi * self._NUM_ANGLE_BIN).long().clamp(0, self._NUM_ANGLE_BIN - 1)
+
+        return lg_src, lg_dst, lg_rel, n_edges
+
+    # ── Forward ───────────────────────────────────────────────────────────────
+
+    def forward(
+        self,
+        coords: torch.Tensor,         # [N, 3] CA coords in Angstroms
+        residue_types: torch.Tensor,  # [N] long, 0-19=AA, 20=UNK
+        atom2batch: torch.Tensor,     # [N] long
+    ) -> torch.Tensor:                # [N, 3072]
+        n_nodes   = coords.shape[0]
+        local_idx = self._local_idx(atom2batch)
+
+        h_v       = self._node_features(coords, residue_types, local_idx, atom2batch)  # [N, 43]
+        ni, no, rel = self._build_knn_graph(coords, atom2batch)
+        edge_feat = self._edge_features(h_v, coords, local_idx, ni, no, rel)  # [E, 81]
+        lg_src, lg_dst, lg_rel, n_lg = self._build_line_graph(coords, ni, no)
+
+        # PW forward (verified against proteinworkshop source):
+        #   1. hidden = layers[i](batch, layer_input)     — uses RAW edge_feat (89-dim)
+        #   2. short-cut: hidden += layer_input (when dims match)
+        #   3. edge_hidden = edge_layers[i](line_graph, edge_input)   — chain
+        #   4. update = scatter_sum(edge_hidden, node_out) → view → layers[i].linear
+        #   5. hidden += relu(update)
+        #   6. hidden = batch_norms[i](hidden)   — top-level BN
+        #   7. edge_input = edge_hidden   — chain edge state forward
+        # The node layer uses RAW f_ji (edge_feat, 89-dim) via layer.edge_linear,
+        # while the updated edge_hidden contributes through layers[i].linear reuse.
+        edge_input = edge_feat  # starts at 89-dim, evolves: 89 → 43 → 512 → 512 → …
+        hiddens: List[torch.Tensor] = []
+
+        for layer, edge_layer, bn in zip(self.layers, self.edge_layers, self.batch_norms):
+            # 1. Node conv using raw edge_feat (89-dim via layer.edge_linear).
+            h_new = layer(h_v, ni, no, rel, n_nodes, edge_feat=edge_feat)
+
+            # 2. Short-cut residual (dims match from layer 1 onward).
+            if h_new.shape == h_v.shape:
+                h_new = h_new + h_v
+
+            # 3. Line-graph edge conv → updated edge state.
+            edge_hidden = edge_layer(edge_input, lg_src, lg_dst, lg_rel, n_lg)
+
+            # 4. Edge-to-node scatter; reuses layer.linear (input dim matches
+            #    edge_hidden.shape[1] by construction of PW's layer dims).
+            node_out_idx = no * self._NUM_RELATION + rel
+            update = scatter_sum(
+                edge_hidden, node_out_idx, dim=0,
+                dim_size=n_nodes * self._NUM_RELATION,
+            )
+            update = update.view(n_nodes, self._NUM_RELATION * edge_hidden.shape[1])
+            update = F.relu(layer.linear(update))
+            h_new = h_new + update
+
+            # 5. Top-level batch norm.
+            h_new = bn(h_new)
+            hiddens.append(h_new)
+            h_v = h_new
+            edge_input = edge_hidden
+
+        return torch.cat(hiddens, dim=-1)  # [N, 3072]
+
+
+class NoTrainPWGearNetEdge(PWGearNetEdge):
+    """Frozen PWGearNetEdge loaded from a ProteinWorkshop Lightning checkpoint.
+
+    Checkpoint source: Zenodo 8287754 (five pretraining tasks):
+        structure_denoising, torsional_denoising, inverse_folding,
+        sequence_denoising, plddt_prediction.
+    Download with hpc-scripts/proteina/data_prep/fetch_pw_gearnet.sh.
+
+    The Lightning .ckpt has all encoder weights under "encoder.*" keys;
+    we strip that prefix before calling load_state_dict.
+    """
+
+    def __init__(
+        self,
+        ckpt_path: str | None = None,
+        random_init: bool = False,
+        random_seed: int = 0,
+    ):
+        if random_init:
+            torch.manual_seed(random_seed)
+        super().__init__()
+        if random_init:
+            print(
+                f"NoTrainPWGearNetEdge: random_init=True (seed={random_seed}), "
+                "skipping pretrained weight load."
+            )
+        else:
+            if not os.path.exists(ckpt_path or ""):
+                raise FileNotFoundError(
+                    f"PW GearNet-Edge checkpoint not found: {ckpt_path!r}. "
+                    "Run hpc-scripts/proteina/data_prep/fetch_pw_gearnet.sh to download it."
+                )
+            # weights_only=False needed: PW Lightning checkpoints embed OmegaConf DictConfig
+            raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            raw_state = raw.get("state_dict", raw)  # Lightning or plain state_dict
+            state = {
+                k[len("encoder."):]: v
+                for k, v in raw_state.items()
+                if k.startswith("encoder.")
+            }
+            if not state:
+                raise ValueError(
+                    f"No 'encoder.*' keys found in {ckpt_path!r}. "
+                    "Expected a ProteinWorkshop Lightning checkpoint."
+                )
+            # Verify input_dim matches ca_angles (43). ca_bb (49) needs full-atom
+            # coords (phi/psi/omega) which proteina doesn't provide.
+            ckpt_input_dim = state["layers.0.self_loop.weight"].shape[1]
+            if ckpt_input_dim != self._INPUT_DIM:
+                raise ValueError(
+                    f"Checkpoint input_dim={ckpt_input_dim} does not match "
+                    f"PWGearNetEdge._INPUT_DIM={self._INPUT_DIM}. "
+                    "Only ca_angles checkpoints (input_dim=43) are supported; "
+                    "ca_bb (input_dim=49) requires phi/psi/omega unavailable in proteina."
+                )
+            missing, unexpected = self.load_state_dict(state, strict=False)
+            if missing:
+                raise RuntimeError(
+                    f"Missing keys loading {ckpt_path!r} — architecture mismatch? "
+                    f"First missing: {missing[0]!r} ({len(missing)} total)"
+                )
+        self.eval()
+        for p in self.parameters():
+            p.requires_grad_(False)
+
+    def train(self, mode: bool = True) -> "NoTrainPWGearNetEdge":
+        return super().train(False)

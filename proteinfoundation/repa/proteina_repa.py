@@ -7,7 +7,7 @@ import torch.nn as nn
 from typing import Dict
 
 from proteinfoundation.proteinflow.proteina import Proteina
-from proteinfoundation.repa.gearnet_encoder import GearNetPerResidueEncoder, MCGearNetEdgePerResidueEncoder
+from proteinfoundation.repa.gearnet_encoder import GearNetPerResidueEncoder, MCGearNetEdgePerResidueEncoder, PWGearNetEdgePerResidueEncoder
 from proteinfoundation.repa.protein_transformer_repa import (
     ProteinTransformerAF3WithHiddenStates,
 )
@@ -28,10 +28,27 @@ def _build_encoder(repa_cfg) -> nn.Module:
         return GearNetPerResidueEncoder(ckpt_path=repa_cfg.gearnet_ckpt_path)
 
     enc_type = encoder_cfg.type
+    random_init = encoder_cfg.get("random_init", False)
+    random_seed = encoder_cfg.get("random_seed", 0)
+    ckpt_path = encoder_cfg.get("gearnet_ckpt_path", None)
     if enc_type == "gearnet":
-        return GearNetPerResidueEncoder(ckpt_path=encoder_cfg.gearnet_ckpt_path)
+        return GearNetPerResidueEncoder(
+            ckpt_path=ckpt_path,
+            random_init=random_init,
+            random_seed=random_seed,
+        )
     if enc_type == "gearnet_mc_edge":
-        return MCGearNetEdgePerResidueEncoder(ckpt_path=encoder_cfg.gearnet_ckpt_path)
+        return MCGearNetEdgePerResidueEncoder(
+            ckpt_path=ckpt_path,
+            random_init=random_init,
+            random_seed=random_seed,
+        )
+    if enc_type == "pw_gearnet":
+        return PWGearNetEdgePerResidueEncoder(
+            ckpt_path=ckpt_path,
+            random_init=random_init,
+            random_seed=random_seed,
+        )
     if enc_type == "esm":
         from proteinfoundation.repa.esm_encoder import ESMPerResidueEncoder
 
@@ -94,6 +111,29 @@ class ProteinaREPA(Proteina):
 
         # Update param count (exclude frozen encoder)
         self.nparams = sum(p.numel() for p in self.parameters() if p.requires_grad)
+
+    def on_load_checkpoint(self, checkpoint: dict) -> None:
+        """Remap encoder keys saved before encoder compile was introduced.
+
+        Checkpoints saved without encoder compile have keys like
+        ``repa_loss.encoder.gearnet.*``. After torch.compile wraps the encoder,
+        the model expects ``repa_loss.encoder._orig_mod.gearnet.*``. Remap
+        transparently so old checkpoints resume cleanly.
+        """
+        if not hasattr(self.repa_loss.encoder, "_orig_mod"):
+            return
+        sd = checkpoint["state_dict"]
+        prefix = "repa_loss.encoder."
+        compiled_prefix = "repa_loss.encoder._orig_mod."
+        has_compiled = any(k.startswith(compiled_prefix) for k in sd)
+        has_uncompiled = any(
+            k.startswith(prefix) and not k.startswith(compiled_prefix) for k in sd
+        )
+        if not has_compiled and has_uncompiled:
+            checkpoint["state_dict"] = {
+                (compiled_prefix + k[len(prefix):] if k.startswith(prefix) else k): v
+                for k, v in sd.items()
+            }
 
     def predict_clean(self, batch: Dict, return_hidden_states: bool = False):
         """Override to support return_hidden_states passthrough."""

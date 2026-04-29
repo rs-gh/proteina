@@ -1,0 +1,35 @@
+# @package _global_
+# Fresh baseline run: bs=80 with linearly-scaled LR (1e-4 × 80/24 ≈ 3.33e-4).
+# Mirrors training_repa_l4_128_per_residue_bs80_lr3x — isolates whether LR scaling
+# helps the baseline as much as it (potentially) helps REPA.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_baseline_128_bs80_lr3x
+
+dataset: pdb_lmdb_128
+dataset_config_subdir: pdb
+
+compile: true
+
+opt:
+  lr: 0.000333  # linear scaling: 1e-4 × (80/24) ≈ 3.33e-4
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

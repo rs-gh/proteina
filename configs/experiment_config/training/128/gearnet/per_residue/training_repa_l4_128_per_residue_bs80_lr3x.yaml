@@ -1,0 +1,49 @@
+# @package _global_
+# 2026-04-26 LR scaling experiment: bs80 with linear-scaled LR (1e-4 × 80/24 ≈ 3.33e-4)
+# to test whether LR was the missing ingredient that made bs80 (blue) underperform
+# the bs24-trained run (magenta) at matched wall time. Identical to
+# training_repa_l4_128_per_residue_bs80.yaml except for opt.lr and opt.skip_nan_grad.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_128_per_residue_bs80_lr3x
+
+dataset: pdb_lmdb_128
+dataset_config_subdir: pdb
+
+compile: true
+
+opt:
+  lr: 0.000333  # linear scaling: 1e-4 × (80/24) ≈ 3.33e-4
+  skip_nan_grad: True  # safety net: no warmup, so bad early-step grads should be skipped not crash
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3  # reference REPA depth (divergence from 256/512 configs which use 2)
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

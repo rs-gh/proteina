@@ -418,10 +418,11 @@ def batch_designability(
     tm_score_list = []
     plddt_list = []
 
-    for pdb_path in pdb_paths:
+    for i, pdb_path in enumerate(pdb_paths):
         name = pdb_name_from_path(pdb_path)
         tmp_path = os.path.join(tmp_root, name)
         os.makedirs(tmp_path, exist_ok=True)
+        logger.info(f"Designability [{i+1}/{len(pdb_paths)}]: {name}")
 
         try:
             # ProteinMPNN: generate sequences

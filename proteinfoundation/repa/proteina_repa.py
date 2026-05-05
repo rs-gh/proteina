@@ -18,9 +18,10 @@ from proteinfoundation.utils.ff_utils.pdb_utils import mask_cath_code_by_level
 def _build_encoder(repa_cfg) -> nn.Module:
     """Instantiate the frozen REPA target encoder from config.
 
-    Supports ``repa.encoder.type in {"gearnet", "esm"}``. Falls back to the
-    legacy ``repa.gearnet_ckpt_path`` schema (pre-pluggable-encoder) so
-    existing training YAMLs keep working without edits.
+    Supports ``repa.encoder.type in {"gearnet", "gearnet_mc_edge",
+    "pw_gearnet", "esm", "mpnn"}``. Falls back to the legacy
+    ``repa.gearnet_ckpt_path`` schema (pre-pluggable-encoder) so existing
+    training YAMLs keep working without edits.
     """
     encoder_cfg = repa_cfg.get("encoder", None)
     if encoder_cfg is None:
@@ -55,6 +56,18 @@ def _build_encoder(repa_cfg) -> nn.Module:
         return ESMPerResidueEncoder(
             model_id=encoder_cfg.get("model_id", "facebook/esm2_t33_650M_UR50D"),
             layer=encoder_cfg.get("layer", None),
+        )
+    if enc_type == "mpnn":
+        from proteinfoundation.repa.mpnn_encoder import ProteinMPNNPerResidueEncoder
+
+        return ProteinMPNNPerResidueEncoder(
+            ckpt_path=encoder_cfg.get("mpnn_ckpt_path", None),
+            hidden_dim=encoder_cfg.get("hidden_dim", 128),
+            num_encoder_layers=encoder_cfg.get("num_encoder_layers", 3),
+            k_neighbors=encoder_cfg.get("k_neighbors", 48),
+            augment_eps=encoder_cfg.get("augment_eps", 0.0),
+            random_init=random_init,
+            random_seed=random_seed,
         )
     raise ValueError(f"Unknown repa.encoder.type: {enc_type!r}")
 

@@ -52,9 +52,14 @@ class ModelTrainerBase(L.LightningModule):
         self.motif_conditioning = cfg_exp.training.get("motif_conditioning", False)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
-            [p for p in self.parameters() if p.requires_grad], lr=self.cfg_exp.opt.lr
-        )
+        params = [p for p in self.parameters() if p.requires_grad]
+        lr = self.cfg_exp.opt.lr
+        weight_decay = self.cfg_exp.opt.get("weight_decay", 0.0)
+        if weight_decay > 0.0:
+            # Decoupled weight decay — correct flavour for transformers.
+            optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+        else:
+            optimizer = torch.optim.Adam(params, lr=lr)
         return optimizer
 
     def _nn_out_to_x_clean(self, nn_out, batch):

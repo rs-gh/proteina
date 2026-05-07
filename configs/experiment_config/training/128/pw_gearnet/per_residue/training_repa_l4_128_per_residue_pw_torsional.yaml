@@ -3,9 +3,9 @@ defaults:
   - /training_ca
   - _self_
 
-run_name_: proteina_60m_repa_l4_128_per_residue_mc_edge
+run_name_: proteina_60m_repa_l4_128_per_residue_pw_torsional
 
-dataset: pdb_lmdb_128_bs24
+dataset: pdb_lmdb_128
 dataset_config_subdir: pdb
 
 compile: true
@@ -20,8 +20,8 @@ ema:
 
 repa:
   encoder:
-    type: gearnet_mc_edge
-    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/mc_gearnet_edge.pth
+    type: pw_gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/pw_gearnet_torsional_denoising_ca_angles.ckpt
   layers: [4]
   lambda_repa: 0.5
   combination_mode: additive

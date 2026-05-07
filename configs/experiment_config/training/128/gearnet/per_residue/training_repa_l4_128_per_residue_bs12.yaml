@@ -1,11 +1,15 @@
 # @package _global_
+# 2026-04-29: small-batch convergence test. Identical to
+# training_repa_l4_128_per_residue_bs80.yaml except batch_size=12 (via dataset
+# pdb_lmdb_128_bs12) and a fresh run_name. Tests whether bs12 reaches better
+# loss faster than bs24/bs80 at matched wall time (12h).
 defaults:
   - /training_ca
   - _self_
 
-run_name_: proteina_60m_repa_l4_128_per_residue_mc_edge
+run_name_: proteina_60m_repa_l4_128_per_residue_bs12
 
-dataset: pdb_lmdb_128_bs24
+dataset: pdb_lmdb_128_bs12
 dataset_config_subdir: pdb
 
 compile: true
@@ -20,15 +24,15 @@ ema:
 
 repa:
   encoder:
-    type: gearnet_mc_edge
-    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/mc_gearnet_edge.pth
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
   layers: [4]
   lambda_repa: 0.5
   combination_mode: additive
   similarity_type: cosine
   averaging: per_residue
-  projector_hidden_dim: 1024
-  projector_num_layers: 3
+  projector_hidden_dim: 512
+  projector_num_layers: 3  # reference REPA depth (divergence from 256/512 configs which use 2)
 
 eval_callback:
   enabled: true

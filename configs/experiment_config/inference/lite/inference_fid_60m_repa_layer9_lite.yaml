@@ -1,9 +1,9 @@
 # @package _global_
 defaults:
-  - inference_fid_60m_baseline
+  - ../full_eval/inference_fid_60m_repa_layer9
   - _self_
 
-run_name_: eval_60m_baseline_lite
+run_name_: eval_60m_repa_layer9_lite
 
 # Lite eval: coarser length grid, fewer samples (~300 PDBs, ~35 min vs 12h)
 step_len: 40

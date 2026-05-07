@@ -1,0 +1,36 @@
+# @package _global_
+# Paper-style unified protocol for n=128 sweeps. Mirrors inference_fid_60m_paper
+# (n=256) but truncated to in-distribution lengths for n=128 models (trained on
+# proteins ≤128 residues).
+#
+# Length grid: {50, 75, 100, 125} — step 25, all in-distribution. The DES
+# protocol's lengths {50, 75, 100, 125} are a strict subset (= the same grid),
+# so one generation pool covers FID and designability/diversity.
+#
+# Sample count: 125/length × 4 lengths = 500 PDBs. 125/length matches the
+# Proteina-paper convention. Designability subsamples 50 of 125 per length at
+# the 4 designated lengths via the orchestrator's --designability_lengths flag,
+# giving 50 × 4 = 200 PDBs through ESMFold.
+#
+# bs=25 divides 125 cleanly → 5 batches/length, no partial-batch round-up.
+# Total batches per ckpt: 4 lengths × 5 batches = 20.
+#
+# ckpt_path / ckpt_name are placeholders; the orchestrator (run_sweep.py)
+# supplies the actual checkpoint via --ckpt_path_override / --ckpt_name_override
+# per task. Standalone use without the orchestrator fails with a missing-
+# directory error.
+defaults:
+  - ../full_eval/inference_fid_60m_baseline
+  - _self_
+
+run_name_: eval_60m_n128_paper
+
+ckpt_path: REQUIRES_CKPT_PATH_OVERRIDE
+ckpt_name: last-EMA.ckpt
+
+nres_lens: [50, 75, 100, 125]
+min_len:
+max_len:
+step_len:
+nsamples_per_len: 125
+generation_batch_size: 25

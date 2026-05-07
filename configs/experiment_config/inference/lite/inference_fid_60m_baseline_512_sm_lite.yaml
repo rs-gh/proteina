@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - inference_fid_60m_baseline
+  - ../full_eval/inference_fid_60m_baseline
   - _self_
 
 run_name_: eval_60m_baseline_512_sm_lite

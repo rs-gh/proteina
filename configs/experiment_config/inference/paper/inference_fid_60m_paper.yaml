@@ -1,0 +1,36 @@
+# @package _global_
+# Paper-style unified protocol for n=256 sweeps. ONE generation pool feeds
+# both FID/fJSD/fS (all 1125 PDBs) and designability/diversity (50 PDBs at
+# each of 5 paper-protocol lengths {50, 100, 150, 200, 250}).
+#
+# Length grid: {50, 75, 100, 125, 150, 175, 200, 225, 250} — step 25 from 50.
+# Designed so the DES protocol's lengths {50, 100, 150, 200, 250} are a strict
+# subset, allowing one generation pool to cover both metric families.
+#
+# Sample count: 125/length × 9 lengths = 1125 PDBs. Matches the original
+# Proteina-paper convention of 125 samples per length for FID. Designability
+# subsamples 50 of 125 per length at the 5 designated lengths via the
+# `--designability_lengths` orchestrator flag.
+#
+# bs=25 divides 125 cleanly → 5 batches/length, no partial-batch round-up
+# (split_nlens in evaluate.py would otherwise inflate the final batch).
+#
+# ckpt_path / ckpt_name are placeholders here; the orchestrator
+# (run_sweep.py) supplies the actual checkpoint via --ckpt_path_override /
+# --ckpt_name_override per task. Standalone use without the orchestrator
+# fails loudly with a missing-directory error.
+defaults:
+  - ../full_eval/inference_fid_60m_baseline
+  - _self_
+
+run_name_: eval_60m_paper
+
+ckpt_path: REQUIRES_CKPT_PATH_OVERRIDE
+ckpt_name: last-EMA.ckpt
+
+nres_lens: [50, 75, 100, 125, 150, 175, 200, 225, 250]
+min_len:
+max_len:
+step_len:
+nsamples_per_len: 125
+generation_batch_size: 25

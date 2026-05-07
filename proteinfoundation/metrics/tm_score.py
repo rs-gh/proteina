@@ -110,25 +110,42 @@ def compute_pairwise_tm_matrix(
 def compute_diversity(
     coords_list: List[np.ndarray],
     tm_threshold: float = 0.5,
-) -> int:
-    """Compute structural diversity as number of TM-score clusters.
+) -> dict:
+    """Compute structural diversity from intra-set pairwise TM-scores.
 
-    Two structures are in the same cluster if their TM-score >= threshold.
-    Uses greedy clustering: iterate through structures, start a new cluster
-    if the structure has TM-score < threshold to all existing cluster centers.
+    Returns two complementary diversity statistics off the same N x N matrix:
+
+      n_clusters         (higher = more diverse)  number of TM>=threshold clusters
+      mean_pairwise_tm   (lower  = more diverse)  mean TM over off-diagonal pairs
+
+    The cluster metric mirrors Yim et al. 2023b / Foldseek `easy-cluster
+    --tmscore-threshold 0.5`; the pairwise-TM mean mirrors Bose et al. 2024.
+    Proteina Tab 1 reports both side by side.
+
+    NOTE on Foldseek divergence: the Proteina paper uses Foldseek's 3Di
+    structural alignment + TM-align refinement. We use biotite's Kabsch
+    superimpose with sequence-index correspondence on Cα-only coords, and a
+    greedy single-pass clusterer that adds a new cluster when the incoming
+    structure has TM<threshold to every existing cluster *center* (not every
+    cluster *member*). For same-length intra-set comparisons the differences
+    are small but absolute numbers are not directly comparable to paper
+    Tab 1. Switching to Foldseek would require shelling out to its CLI.
 
     Args:
         coords_list: List of [n_i, 37, 3] atom37 coordinate arrays.
-        tm_threshold: TM-score threshold for clustering.
+        tm_threshold: TM-score threshold for cluster membership.
 
     Returns:
-        Number of distinct structural clusters.
+        dict with:
+            n_clusters (int): cluster count (>=1 when input non-empty; 0 when empty).
+            mean_pairwise_tm (float): mean TM over the upper triangle (i<j).
+                NaN if fewer than 2 structures.
     """
-    if len(coords_list) == 0:
-        return 0
+    n = len(coords_list)
+    if n == 0:
+        return {"n_clusters": 0, "mean_pairwise_tm": float("nan")}
 
     tm_matrix = compute_pairwise_tm_matrix(coords_list)
-    n = len(coords_list)
 
     cluster_centers = [0]
     for i in range(1, n):
@@ -140,4 +157,13 @@ def compute_diversity(
         if is_novel:
             cluster_centers.append(i)
 
-    return len(cluster_centers)
+    if n >= 2:
+        upper = tm_matrix[np.triu_indices(n, k=1)]
+        mean_pairwise_tm = float(upper.mean())
+    else:
+        mean_pairwise_tm = float("nan")
+
+    return {
+        "n_clusters": len(cluster_centers),
+        "mean_pairwise_tm": mean_pairwise_tm,
+    }

@@ -405,6 +405,11 @@ def batch_designability(
             plddt_list: Per-protein mean pLDDT of the best-scRMSD refolded sequence.
                 HF ESMFold returns pLDDT in [0, 1] (not the [0, 100] paper
                 convention); values are passed through unscaled.
+            pdb_paths_evaluated: Subset of `pdb_paths` whose pipeline did not
+                raise; aligned 1:1 with scRMSD_list / tm_score_list / plddt_list
+                so callers can map path -> scRMSD (e.g. to filter diversity to
+                designable backbones). May be shorter than `pdb_paths` if any
+                ProteinMPNN/ESMFold call failed.
             scRMSD_mean, scRMSD_median: Aggregate RMSD stats.
             tm_score_mean: Aggregate TM-score stat.
             plddt_mean, plddt_median: Aggregate pLDDT stats (in [0, 1]).
@@ -417,6 +422,7 @@ def batch_designability(
     scRMSD_list = []
     tm_score_list = []
     plddt_list = []
+    pdb_paths_evaluated = []
 
     for i, pdb_path in enumerate(pdb_paths):
         name = pdb_name_from_path(pdb_path)
@@ -467,6 +473,7 @@ def batch_designability(
             scRMSD_list.append(best_rmsd)
             tm_score_list.append(best_tm)
             plddt_list.append(best_plddt)
+            pdb_paths_evaluated.append(pdb_path)
 
         except Exception as e:
             logger.warning(f"Designability failed for {pdb_path}: {e}")
@@ -485,6 +492,7 @@ def batch_designability(
         "scRMSD_list": scRMSD_list,
         "tm_score_list": tm_score_list,
         "plddt_list": plddt_list,
+        "pdb_paths_evaluated": pdb_paths_evaluated,
         "scRMSD_mean": float(scRMSD_arr.mean()) if len(scRMSD_arr) > 0 else float("nan"),
         "scRMSD_median": float(np.median(scRMSD_arr)) if len(scRMSD_arr) > 0 else float("nan"),
         "tm_score_mean": float(tm_arr.mean()) if len(tm_arr) > 0 else float("nan"),

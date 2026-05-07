@@ -209,14 +209,25 @@ class ProteinGenerationMetricsCallback(Callback):
         from proteinfoundation.metrics.tm_score import compute_diversity
 
         logger.info("[GenMetrics] Computing structural diversity")
-        n_clusters = compute_diversity(atom37_list, tm_threshold=0.5)
+        div = compute_diversity(atom37_list, tm_threshold=0.5)
+        n_clusters = div["n_clusters"]
+        mean_pairwise_tm = div["mean_pairwise_tm"]
 
         pl_module.log(
             "val/gen_diversity", float(n_clusters),
             on_step=True, on_epoch=False, prog_bar=False,
             logger=True, sync_dist=False,
         )
-        logger.info(f"[GenMetrics] Diversity: {n_clusters} clusters (from {len(atom37_list)} structures)")
+        pl_module.log(
+            "val/gen_diversity_pairwise_tm_mean", float(mean_pairwise_tm),
+            on_step=True, on_epoch=False, prog_bar=False,
+            logger=True, sync_dist=False,
+        )
+        logger.info(
+            f"[GenMetrics] Diversity: {n_clusters} clusters, "
+            f"mean pairwise TM={mean_pairwise_tm:.3f} "
+            f"(from {len(atom37_list)} structures)"
+        )
 
     def _compute_designability_metrics(
         self, pl_module: L.LightningModule, pdb_paths: List[str], tmpdir: str

@@ -29,7 +29,7 @@ repa:
   similarity_type: cosine
   averaging: per_residue
   projector_hidden_dim: 512
-  projector_num_layers: 2  # matches pretrained 256 config
+  projector_num_layers: 3  # matches pretrained 256 config
 
 eval_callback:
   enabled: true

@@ -28,7 +28,7 @@ repa:
   similarity_type: cosine
   averaging: per_sample
   projector_hidden_dim: 512
-  projector_num_layers: 2
+  projector_num_layers: 2  # Pinned at 2 (NOT the audit default of 3): last.ckpt under this run_name_ was saved 2026-04-17/20 with depth=2; bumping to 3 here would shape-mismatch on Lightning auto-resume. To switch to depth=3, copy this file under a new run_name_ (e.g. *_v2) instead of editing in place.
 
 eval_callback:
   enabled: true

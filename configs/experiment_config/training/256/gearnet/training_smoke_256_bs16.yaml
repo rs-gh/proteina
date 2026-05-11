@@ -33,4 +33,4 @@ repa:
   combination_mode: additive
   similarity_type: cosine
   projector_hidden_dim: 512
-  projector_num_layers: 2  # TODO: reference REPA uses 3 — confirm intent before launching
+  projector_num_layers: 3  # TODO: reference REPA uses 3 — confirm intent before launching

@@ -30,7 +30,7 @@ repa:
   similarity_type: cosine
   averaging: per_residue
   projector_hidden_dim: 512
-  projector_num_layers: 2
+  projector_num_layers: 3
 
 eval_callback:
   enabled: true

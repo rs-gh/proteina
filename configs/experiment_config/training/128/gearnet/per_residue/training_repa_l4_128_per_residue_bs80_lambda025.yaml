@@ -1,0 +1,43 @@
+# @package _global_
+# Same as training_repa_l4_128_per_residue_bs80.yaml, but lambda_repa lowered 0.5 -> 0.25.
+# New run_name_ so this starts fresh and does not resume the lambda=0.5 run.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_128_per_residue_bs80_lambda025
+
+dataset: pdb_lmdb_128
+dataset_config_subdir: pdb
+
+compile: true
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.25
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3  # reference REPA depth (divergence from 256/512 configs which use 2)
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

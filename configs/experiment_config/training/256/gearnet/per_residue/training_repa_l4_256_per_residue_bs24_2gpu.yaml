@@ -1,0 +1,47 @@
+# @package _global_
+# PDB n=256 GearNet L4 REPA, clean run at effective bs=24 throughout via 2x
+# A100 DDP with per-GPU bs=12. Avoids the bs=12->24 mid-run bump that
+# contaminated the prior proteina_60m_repa_l4_256_per_residue run.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_256_per_residue_bs24_2gpu
+
+dataset: pdb_lmdb_256_bs12
+dataset_config_subdir: pdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

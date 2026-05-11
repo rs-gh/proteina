@@ -1,0 +1,51 @@
+# @package _global_
+# PDB n=256 GearNet L4 REPA, effective bs=80 via 2-GPU DDP + grad accumulation.
+# Topology: per_gpu_bs=10 * 2 GPUs * accumulate_grad_batches=4 = 80.
+# Tests whether the bs=80 regime that worked at n=128 (proven win) helps at
+# n=256 as well.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_256_per_residue_bs80_2gpu
+
+dataset: pdb_lmdb_256_bs10
+dataset_config_subdir: pdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+opt:
+  accumulate_grad_batches: 4   # 10 per-GPU * 2 GPUs * 4 = eff bs 80
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: true
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

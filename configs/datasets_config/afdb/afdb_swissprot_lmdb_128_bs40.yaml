@@ -1,0 +1,26 @@
+datamodule:
+  _target_: "proteinfoundation.datasets.pdb_data.PDBLightningDataModule"
+  data_dir: ${oc.env:DATA_PATH}/afdb_swissprot/
+  lmdb_dir: ${oc.env:LMDB_DIR}
+  lmdb_max_num_residues: 128
+  in_memory: False
+  format: "pdb"
+  overwrite: False
+  batch_padding: True
+  sampling_mode: "random"
+  transforms:
+    - _target_: "proteinfoundation.datasets.transforms.GlobalRotationTransform"
+    - _target_: "proteinfoundation.datasets.transforms.ChainBreakPerResidueTransform"
+    - _target_: "proteinfoundation.datasets.transforms.PaddingTransform"
+      max_size: 128
+  batch_size: 40  # 2-GPU bs80 effective: 40 per-GPU * 2 GPUs * accum=1 = 80
+  num_workers: 2
+  pin_memory: True
+
+  datasplitter:
+    _target_: "proteinfoundation.datasets.pdb_data.PDBDataSplitter"
+    data_dir: ${oc.env:DATA_PATH}/afdb_swissprot/
+    train_val_test: [0.98, 0.019, 0.001]
+    split_type: "random"
+    split_sequence_similarity: 0.5
+    overwrite_sequence_clusters: False

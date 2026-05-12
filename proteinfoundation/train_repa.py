@@ -322,7 +322,12 @@ if __name__ == "__main__":
             f"bucket_bs={bucket_batch_sizes}, target_effective_bs={target_effective_bs}"
         )
 
-    # Generation quality evaluation callback
+    # Generation quality evaluation callback.
+    # NOT IN USE — disabled globally (eval_callback.enabled: false in all
+    # training configs). Hangs multi-GPU DDP runs: rank 0 spends ~30 min on
+    # GearNet scoring while rank 1 sits on the next all_reduce, tripping the
+    # NCCL watchdog. Kept around in case we want offline eval later; if
+    # re-enabling, gate the rank-0 path with `trainer.strategy.barrier()`.
     eval_cb_cfg = cfg_exp.get("eval_callback")
     if eval_cb_cfg is not None and eval_cb_cfg.get("enabled", False):
         from proteinfoundation.callbacks.generation_metrics import ProteinGenerationMetricsCallback

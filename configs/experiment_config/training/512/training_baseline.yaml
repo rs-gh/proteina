@@ -23,7 +23,7 @@ ema:
 
 # Generation quality evaluation during training
 eval_callback:
-  enabled: true
+  enabled: false
   compute_every_n_steps: 50000
   num_samples: 30
   length: 100

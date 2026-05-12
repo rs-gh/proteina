@@ -26,7 +26,7 @@ opt:
 
 # Trigger generation metrics callback quickly
 eval_callback:
-  enabled: true
+  enabled: false
   compute_every_n_steps: 100
   num_samples: 3
   length: 60

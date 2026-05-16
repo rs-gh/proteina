@@ -105,7 +105,7 @@ def run_proteinmpnn(
         --out_folder {out_dir_root} \
         --num_seq_per_target {num_seq_per_target} \
         --sampling_temp {sampling_temp} \
-        --batch_size 1 \
+        --batch_size {num_seq_per_target} \
         --suppress_print {0 if verbose else 1} \
     """
 

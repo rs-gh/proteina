@@ -482,7 +482,7 @@ class R3NFlowMatcher:
             clamp_val=gt_clamp_val,
         )
 
-        with torch.no_grad():
+        with torch.inference_mode():
             x = self.sample_reference(
                 n, shape=(nsamples,), device=device, mask=mask, dtype=dtype
             )  # [nsamples, n, 3]

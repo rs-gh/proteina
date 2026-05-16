@@ -221,6 +221,15 @@ if __name__ == "__main__":
     assert (
         torch.cuda.is_available()
     ), "CUDA not available"  # Needed for ESMfold and designability
+
+    # Match training-time precision config: TF32 matmuls + bf16 autocast.
+    # Training enables both (train_repa.py:153-154); inference was running
+    # plain fp32 which leaves ~2-3x on the table on A100. The model was
+    # trained under bf16-mixed so it's robust to autocast at sample time.
+    torch.set_float32_matmul_precision("medium")
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
     logger.add(
         sys.stdout,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {file}:{line} | {message}",
@@ -321,8 +330,11 @@ if __name__ == "__main__":
     flat_dict = {k: str(v) for k, v in flat_dict.items()}
     columns = list(flat_dict.keys())
 
-    # Sample the model
-    trainer = L.Trainer(accelerator="gpu", devices=1)
+    # Sample the model. bf16-mixed mirrors training; the ODE integrator's
+    # explicit float32 cast in predict_step (model_trainer_base.py:496,501) is
+    # preserved -- Lightning's precision plugin wraps the forward pass in
+    # autocast but lets caller-side tensors stay in their declared dtype.
+    trainer = L.Trainer(accelerator="gpu", devices=1, precision="bf16-mixed")
     predictions = trainer.predict(model, dataloader)
 
     # Code for designability and

@@ -174,6 +174,12 @@ def load_esmfold():
     Returns:
         (esm_model, tokenizer) tuple. Model is on CUDA.
     """
+    # TF32 matmuls give ~2.1x speedup on A100 vs the torch fp32 default (off),
+    # with no measurable scRMSD/pLDDT delta. See hpc-scripts/proteina/bench/
+    # benchmark_designability_bottlenecks.py (job 29435243).
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
     is_cluster_run = os.environ.get("SLURM_JOB_ID") is not None
     cache_dir = None
     if is_cluster_run:

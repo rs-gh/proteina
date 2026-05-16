@@ -1,0 +1,20 @@
+# @package _global_
+# Scaled paper-protocol n=256 config for meta-evaluation: 625 samples/length
+# × 9 lengths = 5625 PDBs/ckpt (matches the Proteina paper FID protocol exactly,
+# 5× the standard 1125-PDB pool used in inference_fid_60m_paper.yaml).
+#
+# Used by evaluation/proteina/meta/run_meta_sweep.py to estimate (a) wall-clock
+# cost of FID at full paper-protocol N, and (b) how much FID/fJSD numbers
+# settle when the pool is 5× larger than the 1125 we normally use.
+#
+# Length grid + bs unchanged from the 1125 parent so per-batch GPU cost is
+# identical — only the number of batches per length changes (5 → 25).
+# Expected wall-clock per ckpt (extrapolated from 27 min @ 1125): ~135 min.
+#
+# FID-only evaluation is the intended use; designability at 5625 PDBs
+# (45000 ESMFold calls) is not the point of this config.
+defaults:
+  - inference_fid_60m_paper
+  - _self_
+
+nsamples_per_len: 625

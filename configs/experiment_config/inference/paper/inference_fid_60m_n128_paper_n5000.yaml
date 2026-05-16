@@ -1,0 +1,14 @@
+# @package _global_
+# Scaled paper-protocol n=128 config for meta-evaluation: 1250 samples/length
+# × 4 lengths = 5000 PDBs/ckpt (10× the standard 500-PDB pool used in
+# inference_fid_60m_n128_paper.yaml). Mirrors the n=256 5625 config; the
+# n=128 grid only has 4 lengths so we land on 5000 rather than 5625.
+#
+# Used by evaluation/proteina/meta/run_meta_sweep.py to estimate wall-clock
+# cost of FID at full paper-protocol N for n=128. Expected wall-clock per ckpt
+# (extrapolated from 9 min @ 500): ~90 min.
+defaults:
+  - inference_fid_60m_n128_paper
+  - _self_
+
+nsamples_per_len: 1250

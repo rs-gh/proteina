@@ -1,0 +1,49 @@
+# @package _global_
+# PDB n=256 random-init GearNet L4 REPA, effective bs=24 via 2x A100 DDP
+# (per-GPU bs=12). 2-GPU companion to training_repa_l4_256_per_residue_random.
+# Fresh run_name_ avoids the pre-audit depth-2 projector ckpt at
+# /rds/.../proteina_60m_repa_l4_256_per_residue_random/checkpoints/.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_256_per_residue_random_bs24_2gpu
+
+dataset: pdb_lmdb_256_bs12
+dataset_config_subdir: pdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    random_init: true
+    random_seed: 0
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: false
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

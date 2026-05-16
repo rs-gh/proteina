@@ -1,0 +1,51 @@
+# @package _global_
+# 2-GPU DDP resume of training_repa_l4_256_afdb_per_residue (GearNet).
+# Same run_name_ as 1-GPU original so Lightning auto-resumes from
+# /rds/.../store/proteina_60m_repa_l4_256_afdb_per_residue/checkpoints/last.ckpt.
+# Effective bs=24 preserved via per-GPU bs=12 (bs12 dataset variant).
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l4_256_afdb_per_residue
+
+dataset: afdb_swissprot_lmdb_256_bs12
+dataset_config_subdir: afdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+opt:
+  val_check_interval: 10000000
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [4]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: false
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

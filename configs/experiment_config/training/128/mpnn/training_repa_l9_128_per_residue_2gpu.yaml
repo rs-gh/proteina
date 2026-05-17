@@ -1,0 +1,55 @@
+# @package _global_
+# 2-GPU DDP fresh-start training: PDB n=128 REPA aligned to ProteinMPNN CA-only
+# encoder at layer 9 (deeper alignment than the l4 n128 MPNN run).
+# Effective bs=80 via per-GPU bs=40 (matches l4 n128 MPNN canonical bs post-2026-04-18).
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_mpnn_l9_128_per_residue_bs80_2gpu
+
+dataset: pdb_lmdb_128_bs40
+dataset_config_subdir: pdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+opt:
+  val_check_interval: 10000000
+  accumulate_grad_batches: 1
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: mpnn
+    mpnn_ckpt_path: ${oc.env:PROTEINMPNN_WEIGHTS_DIR}/ca_model_weights/v_48_020.pt
+    hidden_dim: 128
+    num_encoder_layers: 3
+    k_neighbors: 48
+    augment_eps: 0.0
+  layers: [9]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 128  # matches ProteinMPNN encoder_dim
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: false
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

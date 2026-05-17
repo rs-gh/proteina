@@ -1,0 +1,50 @@
+# @package _global_
+# 2-GPU DDP resume of REPA l9 n=128 GearNet bs80. Same run_name as the 1-GPU
+# variant so Lightning auto-resumes from store/proteina_60m_repa_l9_128_per_residue_bs80/
+# checkpoints/last.ckpt. Effective bs=80 preserved: per-GPU bs=40 * 2 GPUs.
+defaults:
+  - /training_ca
+  - _self_
+
+run_name_: proteina_60m_repa_l9_128_per_residue_bs80
+
+dataset: pdb_lmdb_128_bs40
+dataset_config_subdir: pdb
+
+compile: true
+
+hardware:
+  ngpus_per_node_: 2
+
+opt:
+  accumulate_grad_batches: 1
+
+log:
+  wandb_project: proteina-repa
+  checkpoint_every_n_steps: 100000
+  last_ckpt_every_n_steps: 3500
+
+ema:
+  validate_original_weights: True
+
+repa:
+  encoder:
+    type: gearnet
+    gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth
+  layers: [9]
+  lambda_repa: 0.5
+  combination_mode: additive
+  similarity_type: cosine
+  averaging: per_residue
+  projector_hidden_dim: 512
+  projector_num_layers: 3
+
+eval_callback:
+  enabled: false
+  compute_every_n_steps: 50000
+  num_samples: 30
+  length: 100
+  compute_gearnet: true
+  compute_designability: false
+  compute_diversity: true
+  gearnet_ckpt_path: ${oc.env:DATA_PATH}/metric_factory/model_weights/gearnet_ca.pth

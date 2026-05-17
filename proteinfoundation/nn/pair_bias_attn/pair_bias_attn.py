@@ -108,11 +108,23 @@ class PairBiasAttention(nn.Module):
         attn = torch.softmax(sim + b, dim=-1)
         return einsum("b h i j, b h j d -> b h i d", attn, v)
 
+    @torch.compiler.disable  # noqa: see comment below
     def _attn_sdpa(self, q, k, v, b, mask: Optional[Tensor]) -> Tensor:
         """SDPA attention: fused kernels via F.scaled_dot_product_attention.
 
         The ``attn_mask`` parameter is an additive float bias applied before
         softmax - same semantics as the manual ``sim + b`` path.
+
+        ``@torch.compiler.disable`` makes this method opaque to torch.compile
+        (added 2026-05-16). Without it, inductor's reduce-overhead cudagraph
+        pipeline was tracing the ``attn_bias.contiguous()`` call away (or
+        baking trace-time strides into the cudagraph) and at runtime — when
+        a partial batch hit a graph specialised on a different batch — the
+        EFFICIENT_ATTENTION kernel would raise
+            RuntimeError: (*bias): last dimension must be contiguous
+        Disabling compile on this call keeps the SDPA fused kernel speedup
+        (cuDNN/CUDA-level fusion is independent of torch.compile) while
+        guaranteeing the .contiguous() runs at runtime as written.
         """
         attn_bias = b if not isinstance(b, int) else None
 

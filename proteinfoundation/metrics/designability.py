@@ -10,6 +10,7 @@
 
 
 import os
+import shutil
 from typing import List, Optional, Union
 
 import einops
@@ -484,6 +485,12 @@ def batch_designability(
         except Exception as e:
             logger.warning(f"Designability failed for {pdb_path}: {e}")
             continue
+        finally:
+            # Remove this PDB's ProteinMPNN/ESMFold scratch immediately. Only
+            # the consolidated metrics are kept; leaving these tmp dirs behind
+            # accumulates ~12 files/PDB and exhausted the /rds inode quota
+            # (1M-file cap), failing the whole sweep mid-designability.
+            shutil.rmtree(tmp_path, ignore_errors=True)
 
     # Cleanup ESMFold
     del esm_model, tokenizer
